@@ -5,6 +5,55 @@ pragma solidity 0.8.3;
 
 contract QuantumMinter {
 
+  // 1000 Nyota == 1 Ultima
+  // gf: means geofenced not girlfriend, v: vesting, v_gf: vesting-geofenced
+
+  enum Quanta {
+    nyota_certified,
+    nyota10_certified,
+    nyota100_certified,
+    ultima_certified,
+    ultima10_certified,
+    ultima100_certified,
+    ultima1000_certified,
+
+    v_nyota100_certified,
+    v_ultima_certified,
+    v_ultima10_certified,
+    v_ultima100_certified,
+    v_ultima1000_certified,
+
+    gf_nyota_certified,
+    gf_nyota10_certified,
+    gf_nyota100_certified,
+    gf_ultima_certified,
+    gf_ultima10_certified,
+    gf_ultima100_certified,
+    gf_ultima1000_certified,
+    
+    v_gf_nyota100_certified,
+    v_gf_ultima_certified,
+    v_gf_ultima10_certified,
+    v_gf_ultima100_certified,
+    v_gf_ultima1000_certified
+  }
+
+  uint32[24] private  base = [ 
+    1, 10, 100, 1000, 10000, 100000, 1000000, 
+    100, 1000, 10000, 100000, 1000000, 
+    1, 10, 100, 1000, 10000, 100000, 1000000,
+    100, 1000, 10000, 100000, 1000000
+  ];
+
+  struct MinterCharter {
+    bool[24] minterPermit;
+    uint256 minterMax;
+    uint256 totalSovereignMinted;
+    uint256 totalGeofencedMinted;
+    uint256 totalVestingMinted;
+    uint256 totalVestingGeofencedMinted;
+  }
+
   mapping(address => uint256) public supremeHodlers;
   uint8 base_percentage = 3;
 
@@ -35,14 +84,14 @@ contract QuantumMinter {
 
   function getHodlerBonus(uint256 value, address hodler)internal view returns(uint256){
     uint8 percentage = base_percentage * whichTier(hodler);
-    return (value * percentage) / 100;  //This can't overflow, values are within range known in advance (quantum minting ranges);
+    return (value * percentage) / 100;
   }
 
-  function mintTierWise(address receiver, uint256 quantum) public returns (uint256 minted){
+  function supremeReward(address receiver, uint256 quantum) public returns(uint256 _minted){
     if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
+      _minted = quantum + getHodlerBonus(quantum, receiver);
     }else{
-      minted = quantum; 
+      _minted = quantum; 
     }
   }
 
@@ -52,72 +101,39 @@ contract QuantumMinter {
     _;
   }
 
-  //this stuff is dangerous
-  //make all of the flag values constants so that they can't change
-  function _mintSovereign(bytes8 flavor, uint256 base, uint8 multiple, address minter, address receiver) rangeCheck(multiple) private {
-    require(flavor == "s", "ULTIMA: the Sovereign flavor can't be minted with this process.");
-    MinterPrivileges _minter = certified_entities[minter];
-    uint256 quantum;
-    
-    if(base == 1){
-      require(_minter.nyota_certified == true, "ULTIMA: not certified to mint this quantum");
-      quantum = base * multiple;
-
-    }else if(base == 10){
-      require(_minter.nyota10_certified == true, "ULTIMA: not certified to mint this quantum");
-      quantum = base * multiple;
-
-    }else if(base == 100){
-      require(_minter.nyota100_certified == true, "ULTIMA: not certified to mint this quantum");
-      quantum = base * multiple;
-
-    }else if(base == 1000){
-      require(_minter.ultima_certified == true, "ULTIMA: not certified to mint this quantum");
-      quantum = base * multiple;
-
-    }else if(base == 10000){
-      require(_minter.ultima10_certified == true, "ULTIMA: not certified to mint this quantum");
-      quantum = base * multiple;
-      
-    }else if(base == 100000){
-      require(_minter.ultima100_certified == true, "ULTIMA: not certified to mint this quantum");
-      quantum = base * multiple;
-      
-    }else if(base == 1000000){
-      require(_minter.ultima1000_certified == true, "ULTIMA: not certified to mint this quantum");
-      quantum = base * multiple;
-      
-    }else{
-      revert("ULTIMA: invalid base provided. Can't compute quantum.")
-    }
+  event Minted(address indexed minter, address indexed receiver, uint8 flavor, uint256 value);
 
 
-    uint256 _minterMax = minter.minterMax;
-    uint256 _totalMinted = getMinterTotal(msg.sender);
-    minted = mintTierWise(receiver, quantum);
-    require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap.");
-    
+  function mintSovereign(uint8 flavor, uint8 multiple, address minter, address receiver) rangeCheck(multiple) private returns(uint128 minted){
+    require(flavor >= 0 && flavor <= 6, "ULTIMA: This process can only mint the Sovereign flavor.");
+    MinterCharter _minter = certified_entities[msg.sender];
+    require(_minter.minterPermit[flavor] == true, "ULTIMA: This minter is not allowed to mint this quantum.");
+    uint128 quantum = base[flavor] * multiple;
+    minted = supremeReward(receiver, quantum);
+    uint128 _totalMinted = getMinterTotal(minter);
+    require(_totalMinted + minted <= _minter.minterMax, "ULTIMA: Minting this amount will exceed the cap.");
 
     if( totalSupply + minted <= maxSupply){
       totalSupply += minted;
       balanceOf[receiver] += minted;
-      certified_entities[msg.sender].totalSovereignMinted += minted;
-      emit Transfer(address(0), receiver, minted);
+      _minter.totalSovereignMinted += minted;
+      emit Minted(minter, receiver, flavor, minted);
     }
   }
 
+
+
   //----- MINTING SOVEREIGN FLAVORS -----//
 
-  function mintNyota(address receiver, uint8 multiple) public returns(uint256 minted) {
-    bytes8 flavor = 's';
-    uint256 base = 1;
-    _mintSovereign(flavor, base, multiple, msg.sender, receiver);
+  function mintNyota(address receiver, uint8 multiple) public returns(uint128 minted) {
+    uint8 flavor = uint8(Quanta.nyota_certified);
+    address minter = msg.sender;
+    mintSovereign(flavor, multiple, minter, receiver);
   }
 
 
-  function mintNyota10(address receiver, uint8 multiple) public rangeCheck returns(uint256 minted){
+  function mintNyota10(address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].nyota10_certified == true, "ULTIMA: This entity is not certified to mint Nyota10."); 
-
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint16 quantum = 10 * multiple;
@@ -133,8 +149,7 @@ contract QuantumMinter {
   }
 
 
-  function mintNyota100(address receiver, uint8 multiple) public returns(uint256 minted){
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintNyota100(address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].nyota100_certified == true, "ULTIMA: This entity is not certified to mint Nyota100."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
@@ -152,20 +167,13 @@ contract QuantumMinter {
   }
 
 
-  function mintUltima(address receiver, uint8 multiple) public returns(uint256 minted){
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintUltima(address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].ultima_certified == true, "ULTIMA: This entity is not certified to mint Nyota100."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint16 quantum = 1000 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     
     if( totalSupply + minted <= maxSupply){
@@ -177,20 +185,13 @@ contract QuantumMinter {
   }
 
 
-  function mintUltima10(address receiver, uint8 multiple) public returns(uint256 minted) {
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintUltima10(address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted) {
     require(certified_entities[msg.sender].ultima10_certified == true, "ULTIMA: This entity is not certified to mint Nyota100."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint16 quantum = 10000 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     
     if( totalSupply + minted <= maxSupply){
@@ -202,20 +203,13 @@ contract QuantumMinter {
   }
 
 
-  function mintUltima100(address receiver, uint8 multiple) public returns(uint256 minted){
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintUltima100(address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].ultima100_certified == true, "ULTIMA: This entity is not certified to mint Nyota100."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint24 quantum = 100000 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     
     if( totalSupply + minted <= maxSupply){
@@ -227,20 +221,13 @@ contract QuantumMinter {
   }
 
 
-  function mintUltima1000(address receiver, uint8 multiple) public returns(uint256 minted){
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintUltima1000(address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].ultima1000_certified == true, "ULTIMA: This entity is not certified to mint Nyota100."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint24 quantum = 1000000 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     
     if( totalSupply + minted <= maxSupply){
@@ -255,20 +242,13 @@ contract QuantumMinter {
 
   //----- MINTING GAIA FLAVORS -----//
 
-  function mintNyotaGF(bytes8 geohash, address receiver, uint8 multiple) public returns(uint256 minted){
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintNyotaGF(bytes8 geohash, address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].gf_nyota_certified == true, "ULTIMA: This entity is not certified to mint Nyota."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint16 quantum = 1 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     
     if( totalSupply + minted <= maxSupply){
@@ -280,20 +260,13 @@ contract QuantumMinter {
   }
 
 
-  function mintNyota10GF(bytes8 geohash, address receiver, uint8 multiple) public returns(uint256 minted){
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintNyota10GF(bytes8 geohash, address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].gf_nyota10_certified == true, "ULTIMA: This entity is not certified to mint Nyota."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint16 quantum = 10 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     
     if( totalSupply + minted <= maxSupply){
@@ -305,20 +278,13 @@ contract QuantumMinter {
   }
 
 
-  function mintNyota100GF(bytes8 geohash, address receiver, uint8 multiple) public returns(uint256 minted){
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintNyota100GF(bytes8 geohash, address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].gf_nyota100_certified == true, "ULTIMA: This entity is not certified to mint Nyota."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint16 quantum = 100 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     
     if( totalSupply + minted <= maxSupply){
@@ -330,20 +296,13 @@ contract QuantumMinter {
   }
 
 
-  function mintUltimaGF(bytes8 geohash, address receiver, uint8 multiple) public returns(uint256 minted){
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintUltimaGF(bytes8 geohash, address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].gf_ultima_certified == true, "ULTIMA: This entity is not certified to mint Nyota."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint16 quantum = 1000 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     
     if( totalSupply + minted <= maxSupply){
@@ -355,20 +314,13 @@ contract QuantumMinter {
   }
 
 
-  function mintUltima10GF(bytes8 geohash, address receiver, uint8 multiple) public returns(uint256 minted){
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintUltima10GF(bytes8 geohash, address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].gf_ultima10_certified == true, "ULTIMA: This entity is not certified to mint Nyota."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint16 quantum = 10000 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     
     if( totalSupply + minted <= maxSupply){
@@ -380,20 +332,13 @@ contract QuantumMinter {
   }
 
 
-  function mintUltima100GF(bytes8 geohash, address receiver, uint8 multiple) public returns(uint256 minted){
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintUltima100GF(bytes8 geohash, address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].gf_ultima100_certified == true, "ULTIMA: This entity is not certified to mint Nyota."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint24 quantum = 100000 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     
     if( totalSupply + minted <= maxSupply){
@@ -406,20 +351,14 @@ contract QuantumMinter {
 
 
 
-  function mintUltima1000GF(bytes8 geohash, address receiver, uint8 multiple) public returns(uint256 minted){
+  function mintUltima1000GF(bytes8 geohash, address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
     require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
     require(certified_entities[msg.sender].gf_ultima1000_certified == true, "ULTIMA: This entity is not certified to mint Nyota."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint24 quantum = 1000000 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     
     if( totalSupply + minted <= maxSupply){
@@ -440,21 +379,14 @@ contract QuantumMinter {
     return block.timestamp + (hodl_base * hodl);
   }
 
-  function mintNyota100V(address receiver, uint8 multiple, uint8 hodl) public returns(uint256 minted){
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintNyota100V(address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].v_nyota100_certified == true, "ULTIMA: This entity is not certified to mint Nyota.");
     require(hodl >= 1 && hodl <= 60, "ULTIMA: Please provide a compliant vesting period."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint16 quantum = 100 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     uint256 payday = getPayday(hodl);
 
@@ -467,21 +399,14 @@ contract QuantumMinter {
   }
 
 
-  function mintUltimaV(address receiver, uint8 multiple, uint8 hodl) public returns(uint256 minted){
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintUltimaV(address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].v_ultima_certified == true, "ULTIMA: This entity is not certified to mint Nyota."); 
     require(hodl >= 1 && hodl <= 60, "ULTIMA: Please provide a compliant vesting period."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint16 quantum = 1000 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     uint256 payday = getPayday(hodl);
     
@@ -494,21 +419,14 @@ contract QuantumMinter {
   }
 
 
-  function mintUltima10V(address receiver, uint8 multiple, uint8 hodl) public returns(uint256 minted){
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintUltima10V(address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].v_ultima10_certified == true, "ULTIMA: This entity is not certified to mint Nyota."); 
     require(hodl >= 1 && hodl <= 60, "ULTIMA: Please provide a compliant vesting period."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint16 quantum = 10000 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     uint256 payday = getPayday(hodl);
     
@@ -521,21 +439,14 @@ contract QuantumMinter {
   }
 
 
-  function mintUltima100V(address receiver, uint8 multiple, uint8 hodl) public returns(uint256 minted){
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintUltima100V(address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].v_ultima100_certified == true, "ULTIMA: This entity is not certified to mint Nyota."); 
     require(hodl >= 1 && hodl <= 60, "ULTIMA: Please provide a compliant vesting period."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint24 quantum = 100000 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     uint256 payday = getPayday(hodl);
     
@@ -548,21 +459,14 @@ contract QuantumMinter {
   }
 
 
-  function mintUltima1000V(address receiver, uint8 multiple, uint8 hodl) public returns(uint256 minted){
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintUltima1000V(address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].v_ultima1000_certified == true, "ULTIMA: This entity is not certified to mint Nyota."); 
     require(hodl >= 1 && hodl <= 60, "ULTIMA: Please provide a compliant vesting period."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint24 quantum = 1000000 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     uint256 payday = getPayday(hodl);
     
@@ -577,7 +481,7 @@ contract QuantumMinter {
 
   //----- MINTING VESTING-GAIA FLAVORS -----//
 
-  function mintNyota100VGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) public returns(uint256 minted){
+  function mintNyota100VGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
     require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
     require(certified_entities[msg.sender].v_gf_nyota100_certified == true, "ULTIMA: This entity is not certified to mint Nyota."); 
     require(hodl >= 1 && hodl <= 60, "ULTIMA: Please provide a compliant vesting period."); 
@@ -585,13 +489,7 @@ contract QuantumMinter {
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint16 quantum = 100 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     uint256 payday = getPayday(hodl);
     
@@ -605,21 +503,14 @@ contract QuantumMinter {
   }
 
 
-  function mintUltimaVGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) public returns(uint256 minted){
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintUltimaVGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].v_gf_ultima_certified == true, "ULTIMA: This entity is not certified to mint Nyota."); 
     require(hodl >= 1 && hodl <= 60, "ULTIMA: Please provide a compliant vesting period."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint16 quantum = 1000 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     uint256 payday = getPayday(hodl);
     
@@ -633,21 +524,14 @@ contract QuantumMinter {
   }
 
 
-  function mintUltima10VGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) public returns(uint256 minted){
-    require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
+  function mintUltima10VGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
     require(certified_entities[msg.sender].v_gf_ultima10_certified == true, "ULTIMA: This entity is not certified to mint Nyota."); 
     require(hodl >= 1 && hodl <= 60, "ULTIMA: Please provide a compliant vesting period."); 
 
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint24 quantum = 10000 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     uint256 payday = getPayday(hodl);
     
@@ -661,7 +545,7 @@ contract QuantumMinter {
   }
 
 
-  function mintUltima100VGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) public returns(uint256 minted){
+  function mintUltima100VGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
     require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
     require(certified_entities[msg.sender].v_gf_ultima100_certified == true, "ULTIMA: This entity is not certified to mint Nyota."); 
     require(hodl >= 1 && hodl <= 60, "ULTIMA: Please provide a compliant vesting period."); 
@@ -669,13 +553,7 @@ contract QuantumMinter {
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint24 quantum = 100000 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     uint256 payday = getPayday(hodl);
     
@@ -689,7 +567,7 @@ contract QuantumMinter {
   }
 
 
-  function mintUltima1000VGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) public returns(uint256 minted){
+  function mintUltima1000VGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
     require(multiple >= 1 && multiple < 10, "ULTIMA: The multiple provided falls outside the minting spectrum.");
     require(certified_entities[msg.sender].v_gf_ultima1000_certified == true, "ULTIMA: This entity is not certified to mint Nyota."); 
     require(hodl >= 1 && hodl <= 60, "ULTIMA: Please provide a compliant vesting period."); 
@@ -697,13 +575,7 @@ contract QuantumMinter {
     uint256 _minterMax = certified_entities[msg.sender].minterMax;
     uint256 _totalMinted = getMinterTotal(msg.sender);
     uint24 quantum = 1000000 * multiple;
-
-    if(supremeHodlers[receiver] > 0){
-      minted = quantum + getHodlerBonus(quantum, receiver);
-    }else{
-      minted = quantum; 
-    }
-    
+    minted = mintTierWise(receiver, quantum);
     require(_totalMinted + minted <= _minterMax, "ULTIMA: Minting this amount will exceed the cap."); 
     uint256 payday = getPayday(hodl);
     
