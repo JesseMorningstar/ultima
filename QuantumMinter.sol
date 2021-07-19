@@ -3,71 +3,20 @@
 pragma solidity 0.8.3;
 
 import "utils/Contextualizer.sol";
+import "utils/UltimaDataLayout.sol";
 
-contract QuantumMinter is Contextualizer {
-  //----- ERC20 SHADOW VARIABLES - NEEDED DUE TO UUPS PATTERN IMPLEMENTATION -----//
-  uint8   public constant decimals = 3;
-  uint256 public constant maxSupply = 3333333333 * (10 ** uint256(decimals));
-  uint256 public totalSupply;
-  mapping(address => uint256) public balanceOf;
-  mapping(address => mapping( uint256 => uint256)) public vesting_balanceOf;
-  mapping(address => mapping(bytes8 => uint256)) public gaia_balanceOf;
-  mapping(address => mapping(bytes8 => mapping( uint256 => uint256))) public gaia_vesting_balanceOf;
+contract QuantumMinter is Contextualizer, UltimaDataLayout {
 
+  bytes32 internal constant QUANTUMMINTER_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
-  // 1000 Nyota == 1 Ultima
-  // gf: means geofenced not girlfriend, v: vesting, v_gf: vesting-geofenced
+  function updateCodeAddress(address newAddress) external onlyFlamekeepers onlyProxy{
+    quantumMinterVersions.push(newAddress);
+    assembly {
+        sstore(QUANTUMMINTER_SLOT, newAddress)
+    }
 
-  enum Quanta {
-    nyota,
-    nyota10,
-    nyota100,
-    ultima,
-    ultima10,
-    ultima100,
-    ultima1000,
-
-    v_nyota100,
-    v_ultima,
-    v_ultima10,
-    v_ultima100,
-    v_ultima1000,
-
-    gf_nyota,
-    gf_nyota10,
-    gf_nyota100,
-    gf_ultima,
-    gf_ultima10,
-    gf_ultima100,
-    gf_ultima1000,
-    
-    v_gf_nyota100,
-    v_gf_ultima,
-    v_gf_ultima10,
-    v_gf_ultima100,
-    v_gf_ultima1000
+    emit Upgraded(newAddress);
   }
-
-  uint32[24] private  base = [ 
-    1, 10, 100, 1000, 10000, 100000, 1000000, 
-    100, 1000, 10000, 100000, 1000000, 
-    1, 10, 100, 1000, 10000, 100000, 1000000,
-    100, 1000, 10000, 100000, 1000000
-  ];
-
-  struct MinterCharter {
-    bool[24] minterPermit;
-    uint128 minterMax;
-    uint128 totalSovereignMinted;
-    uint128 totalGeofencedMinted;
-    uint128 totalVestingMinted;
-    uint128 totalVestingGeofencedMinted;
-  }
-
-  uint16[5] public supremeTier = [5, 50, 500, 5000, 50000];
-  uint8 private base_percentage = 3;
-  mapping(address => uint256) public supremeHodlers;
-  mapping(address => MinterCharter) public certified_entities;
 
   function whichTier(address hodler) internal view returns(uint8 tier) {
     uint256 supremeStatus = supremeHodlers[hodler];
@@ -81,17 +30,20 @@ contract QuantumMinter is Contextualizer {
       tier = 4;
     }else if(supremeStatus > supremeTier[3] && supremeStatus <= supremeTier[4]){
       tier = 5;
+    }else{
+      //throw some kind of error
     }
   }
 
-
   function getMinterTotal(address minter) public view returns (uint128 minterTotal){
-    uint128 _totalSovereignMinted = certified_entities[minter].totalSovereignMinted;
-    uint128 _totalGeofencedMinted = certified_entities[minter].totalGeofencedMinted;
-    uint128 _totalVestingMinted = certified_entities[minter].totalVestingMinted;
-    uint128 _totalVestingGeoFerencedMinted = certified_entities[minter].totalVestingGeofencedMinted;
+    MinterCharter memory _minter = certified_entities[minter];
+    uint128 _totalSovereign = _minter.totalSovereignMinted;
+    uint128 _totalGeofenced = _minter.totalGeofencedMinted;
+    uint128 _totalVesting = _minter.totalVestingMinted;
+    uint128 _totalVestingGeofenced = _minter.totalVestingGeofencedMinted;
+    uint128 _totalLaurels = _minter.totalLaurelsGranted;
 
-    minterTotal = _totalSovereignMinted + _totalGeofencedMinted + _totalVestingMinted + _totalVestingGeoFerencedMinted;
+    minterTotal = _totalSovereign + _totalGeofenced + _totalVesting + _totalVestingGeofenced + _totalLaurels;
   }
 
   function getHodlerBonus(uint128 value, address hodler)internal view returns(uint128){
@@ -117,15 +69,33 @@ contract QuantumMinter is Contextualizer {
     _;
   }
 
+  event Upgraded(address indexed newImplementation);
   event MintedSovereign(address indexed minter, address indexed receiver, uint8 flavor, uint256 value);
   event MintedVesting(address indexed minter, address indexed receiver, uint8 flavor, uint256 value, uint256 payday);
   event MintedGaia(address indexed minter, address indexed receiver, uint8 flavor, bytes8 indexed geohash, uint256 value);
   event MintedGaiaVesting(address indexed minter, address indexed receiver, uint8 flavor, bytes8 indexed geohash, uint256 payday, uint256 value);
+  event LaurelsGranted(address indexed minter, address indexed receiver, uint32 laurels);
 
 
   //----- CORE MINTING FUNCTIONS -----//
-  
-  function mintSovereign(uint8 flavor, uint8 multiple, address minter, address receiver) rangeCheck(multiple) private returns(uint128 minted){
+
+  function grantLaurels(uint8 flavor, uint8 multiple, address minter, address receiver) private onlyProxy returns(uint32 newLaurels) {
+    MinterCharter memory _minter = certified_entities[_msgSender()];
+    require(_minter.minterPermit[flavor] == true, "ULTIMA: This entity is not allowed to grant Laurels.");
+    require(flavor >= 24 && flavor <= 25, "ULTIMA: This process can only be used to grant Laurels.");
+    newLaurels = base[flavor] * multiple;
+    uint128 _totalMinted = getMinterTotal(minter);
+    require(_totalMinted + newLaurels <= _minter.minterMax, "ULTIMA: Granting these many Laurels exceeds this entity's cap.");
+
+    if(totalLaurels + newLaurels <= maxLaurelsSupply && totalSupply + newLaurels <= maxSupply){
+      totalLaurels += newLaurels;
+      laurelsOf[receiver] += newLaurels;
+      _minter.totalLaurelsGranted += newLaurels;
+      emit LaurelsGranted(minter, receiver, newLaurels);
+    }
+  }
+
+  function mintSovereign(uint8 flavor, uint8 multiple, address minter, address receiver) private onlyProxy returns(uint128 minted){
     MinterCharter memory _minter = certified_entities[_msgSender()];
     require(_minter.minterPermit[flavor] == true, "ULTIMA: This minter is not allowed to mint this quantum.");
     require(flavor >= 0 && flavor <= 6, "ULTIMA: This process can only mint the Sovereign flavor.");
@@ -142,7 +112,7 @@ contract QuantumMinter is Contextualizer {
     }
   }
 
-  function mintVesting(uint8 flavor, uint8 hodl, uint8 multiple, address minter, address receiver) rangeCheck(multiple) private returns(uint128 minted){
+  function mintVesting(uint8 flavor, uint8 hodl, uint8 multiple, address minter, address receiver) private onlyProxy returns(uint128 minted){
     MinterCharter memory _minter = certified_entities[_msgSender()];
     require(_minter.minterPermit[flavor] == true, "ULTIMA: This minter is not allowed to mint this quantum.");
     require(flavor >= 7 && flavor <= 11, "ULTIMA: This process can only mint the Vesting flavor.");
@@ -162,7 +132,7 @@ contract QuantumMinter is Contextualizer {
     }
   }
 
-  function mintGeofenced(uint8 flavor, bytes8 geohash, uint8 multiple, address minter, address receiver) rangeCheck(multiple) private returns(uint128 minted){
+  function mintGeofenced(uint8 flavor, bytes8 geohash, uint8 multiple, address minter, address receiver) private onlyProxy returns(uint128 minted){
     MinterCharter memory _minter = certified_entities[_msgSender()];
     require(_minter.minterPermit[flavor] == true, "ULTIMA: This minter is not allowed to mint this quantum.");
     require(flavor >= 12 && flavor <= 18, "ULTIMA: This process can only mint the Gaia flavor.");
@@ -182,7 +152,7 @@ contract QuantumMinter is Contextualizer {
   }
 
 
-  function mintGeofencedVesting(uint8 flavor, uint8 multiple, bytes8 geohash, uint8 hodl, address minter, address receiver ) public rangeCheck(multiple) returns(uint128 minted){
+  function mintGeofencedVesting(uint8 flavor, uint8 multiple, bytes8 geohash, uint8 hodl, address minter, address receiver ) private onlyProxy returns(uint128 minted){
     MinterCharter memory _minter = certified_entities[_msgSender()];
     require(_minter.minterPermit[flavor] == true, "ULTIMA: This minter is not allowed to mint this quantum.");
     require(flavor >= 19 && flavor <= 23, "ULTIMA: This process can only mint the Gaia Vesting flavor.");
@@ -204,46 +174,45 @@ contract QuantumMinter is Contextualizer {
   }
 
 
-
   //----- MINTING SOVEREIGN FLAVORS -----//
 
-  function mintNyota(address receiver, uint8 multiple) public returns(uint128 minted) {
+  function mintNyota(address receiver, uint8 multiple) external onlyProxy rangeCheck(multiple) returns(uint128 minted) {
     uint8 flavor = uint8(Quanta.nyota);
     address minter = msg.sender;
     minted = mintSovereign(flavor, multiple, minter, receiver);
   }
 
-  function mintNyota10(address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
+  function mintNyota10(address receiver, uint8 multiple) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.nyota10);
     address minter = msg.sender;
     minted = mintSovereign(flavor, multiple, minter, receiver);
   }
 
-  function mintNyota100(address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
+  function mintNyota100(address receiver, uint8 multiple) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.nyota100);
     address minter = msg.sender;
     minted = mintSovereign(flavor, multiple, minter, receiver);
   }
 
-  function mintUltima(address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
+  function mintUltima(address receiver, uint8 multiple) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.ultima);
     address minter = msg.sender;
     minted = mintSovereign(flavor, multiple, minter, receiver);
   }
 
-  function mintUltima10(address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted) {
+  function mintUltima10(address receiver, uint8 multiple) external onlyProxy rangeCheck(multiple) returns(uint256 minted) {
     uint8 flavor = uint8(Quanta.ultima10);
     address minter = msg.sender;
     minted = mintSovereign(flavor, multiple, minter, receiver);
   }
 
-  function mintUltima100(address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
+  function mintUltima100(address receiver, uint8 multiple) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.ultima100);
     address minter = _msgSender();
     minted = mintSovereign(flavor, multiple, minter, receiver);
   }
 
-  function mintUltima1000(address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
+  function mintUltima1000(address receiver, uint8 multiple) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.ultima1000);
     address minter = msg.sender;
     minted = mintSovereign(flavor, multiple, minter, receiver);
@@ -252,31 +221,31 @@ contract QuantumMinter is Contextualizer {
   
   //----- MINTING VESTING FLAVORS -----//
 
-  function mintNyota100V(address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
+  function mintNyota100V(address receiver, uint8 multiple, uint8 hodl) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
    uint8 flavor = uint8(Quanta.v_nyota100);
     address minter = _msgSender();
     minted = mintVesting(flavor, hodl, multiple, minter, receiver);
   }
 
-  function mintUltimaV(address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
+  function mintUltimaV(address receiver, uint8 multiple, uint8 hodl) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.v_ultima);
     address minter = _msgSender();
     minted = mintVesting(flavor, hodl, multiple, minter, receiver);
   }
 
-  function mintUltima10V(address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
+  function mintUltima10V(address receiver, uint8 multiple, uint8 hodl) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.v_ultima10);
     address minter = _msgSender();
     minted = mintVesting(flavor, hodl, multiple, minter, receiver);
   }
 
-  function mintUltima100V(address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
+  function mintUltima100V(address receiver, uint8 multiple, uint8 hodl) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.v_ultima100);
     address minter = _msgSender();
     minted = mintVesting(flavor, hodl, multiple, minter, receiver);
   }
 
-  function mintUltima1000V(address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
+  function mintUltima1000V(address receiver, uint8 multiple, uint8 hodl) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.v_ultima1000);
     address minter = _msgSender();
     minted = mintVesting(flavor, hodl, multiple, minter, receiver);
@@ -285,43 +254,43 @@ contract QuantumMinter is Contextualizer {
 
   //----- MINTING GAIA FLAVORS -----//
 
-  function mintNyotaGF(bytes8 geohash, address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
+  function mintNyotaGF(bytes8 geohash, address receiver, uint8 multiple) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.gf_nyota);
     address minter = _msgSender();
     minted = mintGeofenced(flavor, geohash, multiple, minter, receiver);
   }
 
-  function mintNyota10GF(bytes8 geohash, address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
+  function mintNyota10GF(bytes8 geohash, address receiver, uint8 multiple) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.gf_nyota10);
     address minter = _msgSender();
     minted = mintGeofenced(flavor, geohash, multiple, minter, receiver);
   }
 
-  function mintNyota100GF(bytes8 geohash, address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
+  function mintNyota100GF(bytes8 geohash, address receiver, uint8 multiple) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.gf_nyota100);
     address minter = _msgSender();
     minted = mintGeofenced(flavor, geohash, multiple, minter, receiver);
   }
 
-  function mintUltimaGF(bytes8 geohash, address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
+  function mintUltimaGF(bytes8 geohash, address receiver, uint8 multiple) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.gf_ultima);
     address minter = _msgSender();
     minted = mintGeofenced(flavor, geohash, multiple, minter, receiver);
   }
 
-  function mintUltima10GF(bytes8 geohash, address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
+  function mintUltima10GF(bytes8 geohash, address receiver, uint8 multiple) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.gf_ultima10);
     address minter = _msgSender();
     minted = mintGeofenced(flavor, geohash, multiple, minter, receiver);
   }
 
-  function mintUltima100GF(bytes8 geohash, address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
+  function mintUltima100GF(bytes8 geohash, address receiver, uint8 multiple) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.gf_ultima100);
     address minter = _msgSender();
     minted = mintGeofenced(flavor, geohash, multiple, minter, receiver);
   }
 
-  function mintUltima1000GF(bytes8 geohash, address receiver, uint8 multiple) public rangeCheck(multiple) returns(uint256 minted){
+  function mintUltima1000GF(bytes8 geohash, address receiver, uint8 multiple) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.gf_ultima1000);
     address minter = _msgSender();
     minted = mintGeofenced(flavor, geohash, multiple, minter, receiver);
@@ -330,33 +299,49 @@ contract QuantumMinter is Contextualizer {
 
   //----- MINTING VESTING-GAIA FLAVORS -----//
 
-  function mintNyota100VGF(bytes8 geohash, uint8 hodl, uint8 multiple, address receiver) public rangeCheck(multiple) returns(uint256 minted){
+  function mintNyota100VGF(bytes8 geohash, uint8 hodl, uint8 multiple, address receiver) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.v_gf_nyota100);
     address minter = _msgSender();
     minted = mintGeofencedVesting(flavor, multiple, geohash, hodl, minter, receiver);
   }
 
-  function mintUltimaVGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
+  function mintUltimaVGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.v_gf_ultima);
     address minter = _msgSender();
     minted = mintGeofencedVesting(flavor, multiple, geohash, hodl, minter, receiver);
   }
 
-  function mintUltima10VGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
+  function mintUltima10VGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.v_gf_ultima10);
     address minter = _msgSender();
     minted = mintGeofencedVesting(flavor, multiple, geohash, hodl, minter, receiver);
   }
 
-  function mintUltima100VGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
+  function mintUltima100VGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.v_gf_ultima100);
     address minter = _msgSender();
     minted = mintGeofencedVesting(flavor, multiple, geohash, hodl, minter, receiver);
   }
 
-  function mintUltima1000VGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) public rangeCheck(multiple) returns(uint256 minted){
+  function mintUltima1000VGF(bytes8 geohash, address receiver, uint8 multiple, uint8 hodl) external onlyProxy rangeCheck(multiple) returns(uint256 minted){
     uint8 flavor = uint8(Quanta.v_gf_ultima1000);
     address minter = _msgSender();
     minted = mintGeofencedVesting(flavor, multiple, geohash, hodl, minter, receiver);
   }
+
+
+  //----- GRANTING LAURELS -----//
+  function grantLowMerit(address receiver, uint8 multiple) external onlyProxy rangeCheck(multiple) returns(uint256 newLaurels){
+    uint8 flavor = uint8(Quanta.lowMerit);
+    address minter = _msgSender();
+    newLaurels = grantLaurels(flavor, multiple, minter, receiver);
+  }
+
+  function grantHighMerit(address receiver, uint8 multiple) external onlyProxy rangeCheck(multiple) returns(uint256 newLaurels){
+    uint8 flavor = uint8(Quanta.highMerit);
+    address minter = _msgSender();
+    newLaurels = grantLaurels(flavor, multiple, minter, receiver);
+  }
+
+  //----- BURNING LAURELS -----//
 }
