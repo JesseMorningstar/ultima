@@ -31,13 +31,15 @@ contract Ultima {
   string  public constant symbol = "ULTIMA"; 
   string  public constant version = "1";
   uint8   public constant decimals = 3;
-  uint256 public constant maxSupply = 3333333333 * (10 ** uint256(decimals));
+  uint256 public constant maxSupply = 10000000000 * (10 ** uint256(decimals));
   uint256 public constant initialSupply = 33000000 * (10 ** uint256(decimals));
   uint256 public totalSupply;
+  uint256 public totalLaurels;
+  uint256 public maxLaurelsSupply = 21000000 * (10 ** uint256(decimals));
 
   mapping(address => uint256)                      public nonces;
   mapping(address => uint256)                      public balanceOf;
-  mapping(address => uint256)                      public meritOf;
+  mapping(address => uint256)                      public laurelsOf;
   mapping(address => mapping(address => uint256))  public allowance;
   mapping(address => uint256[])                    public vesting_schedule;
   mapping(address => mapping( uint256 => uint256)) public vesting_balanceOf;
@@ -54,32 +56,33 @@ contract Ultima {
   event GeofencedApproval(bytes8 indexed gaia_ring, address indexed owner, address indexed spender, uint256 value);
 
 
-  //----- INFINITYPOOL INCENTIVE PARAMETERS -----//
-  mapping(address => uint256) public supremeHodlers;
-  uint256[5] public supremeTier = [5, 50, 500, 5000, 50000];
-  uint8 base_percentage = 3;
+  //----- EIP1967 FORMALITIES -----//
+  //bytes32 internal constant QUANTUMMINTER_SLOT = bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1));
+  bytes32 internal constant QUANTUMMINTER_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+  address[] public quantumMinterVersions;
+  bool public constant proxyCalling = true;
 
-  //Pass second parameter called approved, which shows the vote tally for the approval of the change of tiers
-  function updateTiers(uint256[5] calldata new_tiers) external only_flamekeepers returns (bool){
-    supremeTier = new_tiers;
-    return true;
+  function getQuantumMinterAddress(uint8 versionNumber) public view returns(address){
+    return quantumMinterVersions[versionNumber];
+  }
+
+  function getLatestQuantumMinterAddress() public view returns(address latestQuantumMinter){
+    assembly{
+      latestQuantumMinter := sload(QUANTUMMINTER_SLOT)
+    }
   }
 
 
-  // function whichTier(address hodler) internal view returns(uint8 tier) {
-  //   uint256 supremeStatus = supremeHodlers[hodler];
-  //   if(supremeStatus > 0 && supremeStatus <= supremeTier[0]){
-  //     tier = 1;
-  //   }else if(supremeStatus > supremeTier[0] && supremeStatus <= supremeTier[1]){
-  //     tier = 2;
-  //   }else if(supremeStatus > supremeTier[1] && supremeStatus <= supremeTier[2]){
-  //     tier = 3;
-  //   }else if(supremeStatus > supremeTier[2] && supremeStatus <= supremeTier[3]){
-  //     tier = 4;
-  //   }else if(supremeStatus > supremeTier[3] && supremeStatus <= supremeTier[4]){
-  //     tier = 5;
-  //   }
-  // }
+  //----- INFINITYPOOL INCENTIVE PARAMETERS -----//
+  uint16[5] public supremeTier = [5, 50, 500, 5000, 50000];
+  uint8 private base_percentage = 3;
+  mapping(address => uint256) public supremeHodlers;
+
+  //Pass second parameter called approved, which shows the vote tally for the approval of the change of tiers
+  function updateTiers(uint16[5] calldata new_tiers) external only_flamekeepers returns (bool){
+    supremeTier = new_tiers;
+    return true;
+  }
 
 
   //----- EIP712 MAGIC -----//
@@ -87,7 +90,7 @@ contract Ultima {
   bytes32 public constant PERMIT_TYPEHASH = 0x6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9;
   bytes32 public immutable DOMAIN_SEPARATOR;
   
-  constructor(address quantumMinter){
+  constructor(address quantumMinterAddress){
     flamekeepers[msg.sender] = true;
 
     uint256 chainId = block.chainid;
@@ -102,59 +105,70 @@ contract Ultima {
       )
     );
 
+    //check that quantumMinterAddress is indeed a contract address
+    quantumMinterVersions.push(quantumMinterAddress);
     assembly {
-      sstore(0xc5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7, quantumMinter)
+      sstore(QUANTUMMINTER_SLOT, quantumMinterAddress)
     }
   }
-
-
 
 
   //----- QUANTUM MINTING -----//
   // 1000 Nyota == 1 Ultima
   // gf: means geofenced not girlfriend, v: vesting, v_gf: vesting-geofenced
 
-  struct MinterPrivileges {
-    bool nyota_certified;
-    bool gf_nyota_certified;
+  enum Quanta {
+    nyota,
+    nyota10,
+    nyota100,
+    ultima,
+    ultima10,
+    ultima100,
+    ultima1000,
 
-    bool nyota10_certified;
-    bool gf_nyota10_certified;
+    v_nyota100,
+    v_ultima,
+    v_ultima10,
+    v_ultima100,
+    v_ultima1000,
 
-    bool nyota100_certified;
-    bool gf_nyota100_certified;
-    bool v_nyota100_certified;
-    bool v_gf_nyota100_certified;
+    gf_nyota,
+    gf_nyota10,
+    gf_nyota100,
+    gf_ultima,
+    gf_ultima10,
+    gf_ultima100,
+    gf_ultima1000,
+    
+    v_gf_nyota100,
+    v_gf_ultima,
+    v_gf_ultima10,
+    v_gf_ultima100,
+    v_gf_ultima1000,
 
-    bool ultima_certified;
-    bool gf_ultima_certified;
-    bool v_ultima_certified;
-    bool v_gf_ultima_certified;
-
-    bool ultima10_certified;
-    bool gf_ultima10_certified;
-    bool v_ultima10_certified;
-    bool v_gf_ultima10_certified;
-
-    bool ultima100_certified;
-    bool gf_ultima100_certified;
-    bool v_ultima100_certified;
-    bool v_gf_ultima100_certified;
-
-    bool ultima1000_certified;
-    bool gf_ultima1000_certified;
-    bool v_ultima1000_certified;
-    bool v_gf_ultima1000_certified;
-
-    uint256 minterMax;
-    uint256 totalSovereignMinted;
-    uint256 totalGeofencedMinted;
-    uint256 totalVestingMinted;
-    uint256 totalVestingGeofencedMinted;
-
+    lowMerit,
+    highMerit
   }
 
-  mapping(address => MinterPrivileges) public certified_entities;
+  uint128[26] private  base = [ 
+    1, 10, 100, 1000, 10000, 100000, 1000000, 
+    100, 1000, 10000, 100000, 1000000, 
+    1, 10, 100, 1000, 10000, 100000, 1000000,
+    100, 1000, 10000, 100000, 1000000,
+    1, 10
+  ];
+
+  struct MinterCharter {
+    bool[26] minterPermit;
+    uint128 minterMax;
+    uint128 totalSovereignMinted;
+    uint128 totalGeofencedMinted;
+    uint128 totalVestingMinted;
+    uint128 totalVestingGeofencedMinted;
+    uint128 totalLaurelsGranted;
+  }
+
+  mapping(address => MinterCharter) public certified_entities;
   
 
   function _transfer(address sender, address receiver, uint256 value) private {
@@ -307,7 +321,7 @@ contract Ultima {
   fallback() external {
     
     assembly {
-      let quantumMinter := sload(0xc5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7)
+      let quantumMinter := sload(QUANTUMMINTER_SLOT)
       calldatacopy(0x0, 0x0, calldatasize())
       let success := delegatecall(sub(gas(), 10000), quantumMinter, 0x0, calldatasize(), 0, 0)
       let retSz := returndatasize()
