@@ -2,42 +2,33 @@
 
 pragma solidity 0.8.3;
 
+//----- INTERFACES TO ENABLE INTERACTION -----//
+  interface infinityPoolFunctions{
+    function getInfinityPoolFingerprint() external pure returns(bytes32);
+  }
+
 contract Ultima {
-
-  //----- ACCESS CONTROL -----//
-  mapping(address => bool) internal flamekeepers;
-  uint16 public flamekeepers_census = 0;
-
-  function induct(address candidate) external only_flamekeepers{
-    flamekeepers[candidate] = true;
-    flamekeepers_census++;
-  }
-
-  function retire(address incumbent) external only_flamekeepers{
-    flamekeepers[incumbent] = false;
-    flamekeepers_census--;
-  }
-
-  modifier only_flamekeepers{
-    require(flamekeepers[msg.sender] == true, "ULTIMA: Performing this magic requires a special calling.");
-    _;
-  }
-
-
-
   //----- ERC20 SETUP -----//
+
+  //Rod Tidwell: You know some dudes might have the coin but they'll never have the Quan. 
+  //Jerry Maguire: What? What is...?
+  //Rod Tidwell: It means Love, Respect, Community, and the dollars too, the entire package: the Quan.
+  //Jerry Maguire: *Whispers pensively* Great word!
 
   string  public constant name = "ULTIMA QUAN";
   string  public constant symbol = "ULTIMA"; 
   string  public constant version = "1";
+  address public infinityPool;
   uint8   public constant decimals = 3;
   uint256 public constant maxSupply = 10000000000 * (10 ** uint256(decimals));
-  uint256 public constant initialSupply = 33000000 * (10 ** uint256(decimals));
+  uint256 public maxLaurelsSupply = 110000000 * (10 ** uint256(decimals));
+  uint256 public maxSupremeSupply = 1000000000 * (10 ** uint256(decimals));
   uint256 public totalSupply;
   uint256 public totalLaurels;
-  uint256 public maxLaurelsSupply = 21000000 * (10 ** uint256(decimals));
+  uint256 public totalExalted;  
 
   mapping(address => uint256)                      public nonces;
+  mapping(address => uint256)                      public supremePoiseOf;
   mapping(address => uint256)                      public balanceOf;
   mapping(address => uint256)                      public laurelsOf;
   mapping(address => mapping(address => uint256))  public allowance;
@@ -50,6 +41,7 @@ contract Ultima {
   mapping(bytes8  => mapping(address => uint256[]))                   public gaia_vesting_schedule;  
   mapping(address => mapping(bytes8 => mapping( uint256 => uint256))) public gaia_vesting_balanceOf;  
 
+  event HodlerExalted(address indexed receiver, uint256 zenith);
   event Approval(address indexed owner, address indexed spender, uint256 value);
   event Transfer(address indexed sender, address indexed receiver, uint256 value);
   event GeofencedTransfer(bytes8 indexed gaia_ring, address indexed sender, address indexed receiver, uint256 value);
@@ -62,6 +54,11 @@ contract Ultima {
   address[] public quantumMinterVersions;
   bool public constant proxyCalling = true;
 
+
+  function getQuantumMinterVersions() public view returns(uint256){
+    return quantumMinterVersions.length;
+  }
+
   function getQuantumMinterAddress(uint8 versionNumber) public view returns(address){
     return quantumMinterVersions[versionNumber];
   }
@@ -73,13 +70,50 @@ contract Ultima {
   }
 
 
+  //----- ACCESS CONTROL -----//
+  mapping(address => bool) internal flamekeepers;
+  uint16 public flamekeepers_census = 0;
+  bytes32 infinityPoolFingerprint;
+
+  function induct(address candidate) external onlyFlamekeepers{
+    flamekeepers[candidate] = true;
+    flamekeepers_census++;
+  }
+
+  function retire(address incumbent) external onlyFlamekeepers{
+    flamekeepers[incumbent] = false;
+    flamekeepers_census--;
+  }
+
+  modifier onlyFlamekeepers{
+    require(flamekeepers[msg.sender] == true, "ULTIMA: Performing this magic requires a special calling.");
+    _;
+  }
+
+  function setInfinityPoolFingerprint(string memory preImage)external onlyFlamekeepers{
+    bytes32 _fingerprint = keccak256(abi.encodePacked(preImage));
+    infinityPoolFingerprint = _fingerprint;
+  }
+
+  function setInfinityPoolAddress(address _infinityPool) internal onlyFlamekeepers{
+    bytes32 fingerprint = infinityPoolFunctions(_infinityPool).getInfinityPoolFingerprint();
+    require(fingerprint == infinityPoolFingerprint, "The destination contract could be not be validated");
+    infinityPool = _infinityPool;
+  }
+
+  modifier onlyInfinity{
+    require(msg.sender == infinityPool, "ULTIMA: This process can only be carried out by the Infinity Pool");
+    _;
+  }
+
+
   //----- INFINITYPOOL INCENTIVE PARAMETERS -----//
   uint16[5] public supremeTier = [5, 50, 500, 5000, 50000];
   uint8 private base_percentage = 3;
   mapping(address => uint256) public supremeHodlers;
 
   //Pass second parameter called approved, which shows the vote tally for the approval of the change of tiers
-  function updateTiers(uint16[5] calldata new_tiers) external only_flamekeepers returns (bool){
+  function updateTiers(uint16[5] calldata new_tiers) external onlyFlamekeepers returns (bool){
     supremeTier = new_tiers;
     return true;
   }
@@ -92,7 +126,8 @@ contract Ultima {
   
   constructor(address quantumMinterAddress){
     flamekeepers[msg.sender] = true;
-
+    // uint256 initialSupremeSupply = 1000000000 * (10 ** uint256(decimals));
+    // uint256 initialSupply = 33000000 * (10 ** uint256(decimals));
     uint256 chainId = block.chainid;
 
     DOMAIN_SEPARATOR = keccak256(
@@ -171,6 +206,10 @@ contract Ultima {
   mapping(address => MinterCharter) public certified_entities;
   
 
+  receive() external payable {
+    revert("Don't send your Ether wandering aimlessly in cyberspace kid!");
+  }
+
   function _transfer(address sender, address receiver, uint256 value) private {
     require(sender != address(0), "ULTIMA: please provide an adequate origin address");
     require(receiver != address(0), "ULTIMA: please provide an adequate destination address.");
@@ -217,6 +256,14 @@ contract Ultima {
     return true;
   }
 
+
+  //----- SUPREME UTILITIES -----//
+  function exalt(address receiver, uint256 zenith) external onlyInfinity{
+    require(totalExalted + zenith <= maxSupremeSupply, "ULTIMA: This exaltation will exceed the cap if carried out.");
+    totalExalted += zenith;
+    supremePoiseOf[receiver] += zenith;
+    emit HodlerExalted(receiver, zenith);
+  }
 
 
   //----- GAIA UTILITIES -----//
@@ -266,7 +313,6 @@ contract Ultima {
     _approveGeofenced(geohash, msg.sender, spender, currentGaiaAllowance - subtractedValue);
     return true;
   }
-
   
 
   //----- VESTING UTILITIES -----//
