@@ -19,9 +19,19 @@ pragma solidity 0.8.3;
    }
 
 contract InfinityPool {
+   //Information about last withdrawal is essential for computing values for next withdrawal
+   
    struct SupremeStack {
       uint256 vintage;
-      uint256 cluster;
+      uint256 supreme;
+   }
+
+   struct WithdrawalSummary{
+      uint256 stackLevel;
+      uint256 timestamp;
+      uint256 quarterNumber; 
+      uint256 distributionUnits;
+      uint8   percentage;
    }
 
    struct UtilityCharter{
@@ -39,7 +49,8 @@ contract InfinityPool {
    address ultimaAddress;
    uint256[5] internal supremeValue = [1000, 2000, 4000, 10000, 20000];
    UtilityCharter[] public communityUtilities;
-   mapping(address => SupremeStack[]) public constellationsOf;
+   mapping(address => SupremeStack[]) public depositsOf;
+   mapping(address => WithdrawalSummary[]) public withdrawalsHistory;
 
    constructor(address _ultimaAddress){
       ultimaAddress = _ultimaAddress;
@@ -57,13 +68,14 @@ contract InfinityPool {
       communityUtilities.push(newUtility);
    }
 
-   function updateUtilityStatus(bool newStatus, uint8 id) external onlyFlamekeepers returns(bool){
+   function updateUtilityStatus(bool newStatus, uint8 utilityId) external onlyFlamekeepers returns(bool){
       communityUtilities[utilityId].operative = newStatus;
       return (communityUtilities[utilityId].callsign, newStatus);
    }
 
-   function newConstellation(address rainmaker, uint256 nova) internal {
-      constellationsOf[rainmaker].push(SupremeStack(block.timestamp, nova));
+   //Newly minted Supreme tokens form a constellation
+   function newConstellation(address rainmaker, uint256 amount) internal {
+      depositsOf[rainmaker].push(SupremeStack(block.timestamp, amount));
    }
 
    function exaltRainmaker(address rainmaker, uint8 quantum) internal returns(uint256 newPoise){
@@ -72,6 +84,20 @@ contract InfinityPool {
       newConstallation(rainmaker, zenith);
       InfinityPoolExpanse += zenith;
    }
+
+   function getDistributionUnits(address supremeHodler) internal returns(uint256 distributionUnits){
+      SupremeStack[] memory deposits = depositsOf[supremeHodler];
+      uint256 numberOfDeposits = deposits.length;
+      for(uint i = 0; i < numberOfDeposits; i++){
+         uint256 lifespan = (block.timestamp - deposits[i].vintage) / 60;
+         uint256  depositDistributionUnits= lifespan * deposits[i].supreme;
+         distributionUnits += depositDistributionUnits;
+      }
+   }
+
+   function getSupremeHodlerPoolShare(uint256) internal returns(uint256){
+   }
+
 
    function flood() external payable returns(uint256 exaltation) {
       //We want the state to change only in very predictable ways
