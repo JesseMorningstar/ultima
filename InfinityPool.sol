@@ -10,7 +10,6 @@ Key functions include:
 3. Implementing an algorithm for the fair distribution of the profits obtained from that productive deployment of capital
 */
 
-
 pragma solidity 0.8.3;
 
 import "./modules/Contextualizer.sol"; 
@@ -21,7 +20,7 @@ interface ultimaContract{
 }
 
 contract InfinityPool {
-   struct SupremeStacked {
+   struct SupremeStacked { //should probably be supremeDeposit
       uint256 vintage;
       uint256 supreme;
    }
@@ -64,6 +63,8 @@ contract InfinityPool {
       uint8   payoffFactorScaled;
       bool    withdrawn;
       uint256 withdrawalTimestamp;
+      uint256 supremeScored;
+      uint256[] pendingWithdrawals;
    }
 
    //Information about last withdrawal is essential for computing values for next withdrawal
@@ -169,10 +170,17 @@ contract InfinityPool {
       InfinityPoolExpanse += zenith;
    }
 
-   function claimSupremePayoff() external onlySupremeHodler(_msgSender()){
-      //keep them from making multiple claims. They can only make one claim. 
-      //We don't want duplicate data. And we don't want the system to be gamed.
+   function claimSupremePayoff() external onlySupremeHodlers(_msgSender()){
       uint256 currentQuarterSlot = currentQuarter - 1;
+      int256 lastClaimSlot = withdrawalsHistory[_msgSender()].length - 1;
+      bool uniqueClaim = false;
+      
+      if(lastClaimSlot < 0){uniqueclaim = true;} else{
+         WithdrawalMetadata lastClaimMetadata = withdrawalsHistory[_msgSender()][lastClaimSlot];
+         if(lastClaimMetadata.quarterId < currentQuarter){uniqueClaim = true;}
+      }
+      require(uniqueClaim == true, "ULTIMA: You've already claimed your payoff");
+
       uint256 quarterEndMark = quarters[currentQuarterSlot].end;
       uint256 ClaimingWindowStatus = quarters[currentQuarterSlot].claimingWindowStatus;
       uint256 claimingWindowOpened = quarterEndMark - 10 days;
@@ -185,16 +193,21 @@ contract InfinityPool {
       
       uint256 stackLevel = depositsOf[_msgSender()].length - 1;
       uint256 claimSlot = quarters[currentQuarterSlot].payoffClaims.length;
-      uint256 distributionUnits = getDistributionUnits(_msgSender());
+      uint256 (supremeScored, distributionUnits) = getDistributionUnits(_msgSender()); //test these values
       uint256 payoffFactorScaled;
       uint256 withdrawalTimestamp;
+
+      //do something here for pending withdrawals 
+      //check if the last quarter withdrawn is true or false. 
+      //if false then add it to the uint256[] pendingWithdrawals
       
       quarters[currentQuarterSlot].payoffClaims.push(PayoffClaim(_msgSender(), distributionUnits, payoffFactorScaled));
-      withdrawalHistory[_msgSender()].push(withdrawalMetadata(
+      withdrawalsHistory[_msgSender()].push(WithdrawalMetadata(
          stackLevel, 
          claimSlot, 
          blockTime, 
          currentQuarter, 
+         supremeScored,
          payoffFactorScaled, 
          false, 
          withdrawalTimestamp
@@ -202,29 +215,69 @@ contract InfinityPool {
       quarters[currentQuarterSlot].totalDistributionUnits += distributionUnits;
    }
 
-   function withdrawPayoff() internal returns(bool){
-      uint256 payoffFactorScaled = getPayoffFactorScaled(distributionUnits);
+   function getPendingWithdrawals() external {
+
    }
 
-   function getPayoffFactorScaled(uint256 dUnits) public returns (uint256 payoffFactorScaled){
+   function withdrawPayoff(uint256 quarterId) external onlySupremeHodlers(_msgSender())  returns(bool){
+      uint256 quarterSlot = quarterId - 1;
+      Quarter quarter = quarters[currentQuarterSlot]; 
+      WithdrawalMetadata withdrawalParameters; // Resume
+      uint256 withdrawalsWindowOpened = quarter.end - 3 days; 
+
+      //of course they can only call this function during the withdrawal period
+      //and they must be a supremeHodler, so add that modifier
+      //make sure that only those holders who have made a claim can make a withdrawal (so a claim must exist for this to work)
+      //where are we getting the distribution units from? [We need to extract that value]
+      uint256 payoffFactorScaled = getPayoffFactorScaled(distributionUnits);
+      //write the payoffFactorScaled to the withdrawal metadata
+      //make the withdrawal calculation 
+      //and actually carry out the withdrawal
+   }
+
+   function getPayoffFactorScaled(uint256 dUnits) public returns(uint256 payoffFactorScaled){
       uint256 scale = 10**18;
       uint256 currentQuarterSlot = currentQuarter - 1;
       uint256 totalDUnits = quarters[currentQuarterSlot].totalDistributionUnits;
       payoffFactorScaled = (dUnits * scale) / totalDUnits;
    }
 
-   function getDistributionUnits(address supremeHodler) internal returns(uint256 distributionUnits){
+   function getDistributionUnits(address supremeHodler) internal returns(uint256 supremeScored, distributionUnits){
       SupremeStacked[] memory deposits = depositsOf[supremeHodler];
+      uint256 currentQuarterSlot = currentQuarter - 1;
+      uint256 nextQuarterSlot = currentQuarter;
+      Quarter thisQuarter = quarters[currentQuarterSlot];
       uint256 numberOfDeposits = deposits.length;
-      //have to update this function to add the logic for calculating the distribution units only after 
-      //last withdrawal that was made.
-      for(uint i = 0; i < numberOfDeposits; i++){
-         uint256 lifespan = (block.timestamp - deposits[i].vintage) / 60;
-         uint256  depositDistributionUnits = lifespan * deposits[i].supreme;
+      uint256 withdrawalsToDate = withdrawalsHistory[_msgSender()].length;
+      uint256 lastWithdrawalSlot = withdrawalsToDate - 1;
+      uint256 accountingPoint = thisQuarter.end;
+      uint256 stackLevel;
+      uint226 i;
+
+      if(withdrawalsToDate < 1){
+         i = 0;
+         distributionUnits = 0;
+         supremeScored = 0;
+      } else {
+         WithdrawalMetadata lastWithdrawal = withdrawalsHistory[lastWithdrawalSlot];
+         stackLevel = lastWithdrawal.stackLevel; 
+         uint256 resetQuarterSlot = lastWithdrawal.quarterId; //check this stuff, it can get dangerous fast
+         uint256 resetPoint = quarters[resetQuarterSlot].start;
+         uint256 lifespan = (accountingPoint - resetPoint) / 86400;
+         supremeScored = lastWithdrawal.supremeScored;
+         distributionUnits = lifespan * supremeScored;
+         i = stackLevel + 1;
+      }
+
+      while( i < numberOfDeposits){
+         SupremeStacked deposit = deposits[i];
+         uint256 _lifespan = (quarters[nextQuarterSlot].start - deposit.vintage) / 86400;
+         uint256 depositDistributionUnits = _lifespan * deposit.supreme;
+         supremeScored += deposit.supreme;
          distributionUnits += depositDistributionUnits;
+         i++;
       }  
    }
-
 
    function flood() external payable returns(uint256 exaltation) {
       //We want the state to change only in very predictable ways
@@ -258,5 +311,4 @@ contract InfinityPool {
    function getInfinityPoolTide() public view returns(uint){
       return address(this).balance;
    }
-
 }
