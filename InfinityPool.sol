@@ -16,6 +16,7 @@ import "./modules/Contextualizer.sol";
 
 interface ultimaContract{
    function exalt(address receiver, uint256 zenith) external returns(uint256);
+   function isFlamekeeper(address ballerina) view external returns(bool isKeeper);
    function isSupremeHolder(address ballerina) view external returns(bool ballerinaIsHodler);
 }
 
@@ -47,6 +48,15 @@ contract InfinityPool {
       PayoffClaim[] payoffClaims;
    }
 
+   struct Synchronizer{
+      uint256 quarterId;
+      uint256 claimingPhaseStart;
+      uint256 claimingPhaseEnd;
+      uint256 withdrawalsKickoff;
+      bool claimingPhase;
+      bool withdrawalPhase;
+   }
+
    struct PayoffClaim {
       address payable supremeHodler;
       uint256 distributionUnits;
@@ -68,10 +78,10 @@ contract InfinityPool {
    }
 
    //Information about last withdrawal is essential for computing values for next withdrawal
-   uint256 currentQuarter;
-   uint256 quarterSpan = 90 days;
-   uint256 genesisPoint; 
-   bool    genesisPointExists = false;
+   uint256 public currentQuarter;
+   uint256 public quarterSpan = 90 days;
+   uint256 public genesisPoint; 
+   bool    public genesisPointExists = false;
 
    uint256 public InfnityPoolExpanse;
    uint256 public CommunityTreasury;
@@ -79,8 +89,16 @@ contract InfinityPool {
    uint256[5] internal supremeValue = [1000, 2000, 4000, 10000, 20000];
    UtilityCharter[] public communityUtilities;
    Quarter[] public quarters; 
+   Synchronizer[] public watersheds;
    mapping(address => SupremeStacked[]) public depositsOf;
    mapping(address => WithdrawalMetadata[]) public withdrawalsHistory;
+
+
+   modifier onlyFlamekeepers(address theCaller){
+      bool isAKeeper = ultimaContract(ultimaAddress).isFlamekeeper(theCaller);
+      require(isAKeeper == true, "ULTIMA: Must be A flamekeeper to proceed.");
+      _;
+   }
 
    modifier onlySupremeHodlers(address hodler){
       bool supremeHodler = ultimaContract(ultimaAddress).isSupremeHolder(hodler);
@@ -101,6 +119,25 @@ contract InfinityPool {
       genesisPoint = block.timestamp;
       genesisPointExists = true;
       currentQuarter = 1;
+   }
+
+   //the synchronizing functions will get more sophisticated
+   function syncClaimingPhaseStart(uint256 start) external onlyFlamekeepers{
+      uint256 quarterSlot = currentQuarter - 1;
+      watersheds[quarterSlot].claimingPhaseStart = start;
+      watersheds[quarterSlot].claimingPhase = true;
+   }
+
+   function syncClaimingPhaseEnd(uint256 end) external onlyFlamekeepers{
+      uint256 quarterSlot = currentQuarter - 1;
+      watersheds[quarterSlot].claimingPhaseEnd = end;
+      watersheds[quarterSlot].claimingPhase = false;
+   }
+
+   function syncWithdrawalsKickoff(uint256 kickoffPoint) external onlyFlamekeepers{
+      uint256 quarterSlot = currentQuarter - 1;
+      watersheds[quarterSlot].withdrawalsKickoff = kickoffPoint;
+      watersheds[quarterSlot].withdrawalsPhase = true;
    }
 
    function rollOutQuarters() external onlyFlamekeepers {
@@ -174,6 +211,7 @@ contract InfinityPool {
       uint256 currentQuarterSlot = currentQuarter - 1;
       int256 lastClaimSlot = withdrawalsHistory[_msgSender()].length - 1;
       bool uniqueClaim = false;
+      uint256[] pendingWithdrawals;
       
       if(lastClaimSlot < 0){uniqueclaim = true;} else{
          WithdrawalMetadata lastClaimMetadata = withdrawalsHistory[_msgSender()][lastClaimSlot];
@@ -188,7 +226,7 @@ contract InfinityPool {
       uint256 blockTime = block.timestamp;
       bool    greenLight;
       if(blockTime >= claimingWindowopened && blockTime <= claimingWindowClosed) greenLight = true;
-      require(greenLight == true && claimingWindowStatus == true, "ULTIMA: Sorry, you can't claim your payoff at this time.");
+      require(greenLight == true && watersheds[currentQuarterSlot].claimingPhase == true, "ULTIMA: Sorry, you can't claim payoffs at this time.");
 
       
       uint256 stackLevel = depositsOf[_msgSender()].length - 1;
@@ -197,9 +235,10 @@ contract InfinityPool {
       uint256 payoffFactorScaled;
       uint256 withdrawalTimestamp;
 
-      //do something here for pending withdrawals 
-      //check if the last quarter withdrawn is true or false. 
-      //if false then add it to the uint256[] pendingWithdrawals
+      if(lastClaimSlot >= 0){
+         uint256[] previouslyPending = withdrawalsHistory[_msgSender()][lastClaimSlot].pendingWithdrawals; 
+         pendingWithdrawals = previouslyPending.push(currentQuarter);
+      }
       
       quarters[currentQuarterSlot].payoffClaims.push(PayoffClaim(_msgSender(), distributionUnits, payoffFactorScaled));
       withdrawalsHistory[_msgSender()].push(WithdrawalMetadata(
@@ -210,7 +249,9 @@ contract InfinityPool {
          supremeScored,
          payoffFactorScaled, 
          false, 
-         withdrawalTimestamp
+         withdrawalTimestamp,
+         supremeScored, 
+         pendingWithdrawals
       ));
       quarters[currentQuarterSlot].totalDistributionUnits += distributionUnits;
    }
@@ -222,17 +263,18 @@ contract InfinityPool {
    function withdrawPayoff(uint256 quarterId) external onlySupremeHodlers(_msgSender())  returns(bool){
       uint256 quarterSlot = quarterId - 1;
       Quarter quarter = quarters[currentQuarterSlot]; 
-      WithdrawalMetadata withdrawalParameters; // Resume
-      uint256 withdrawalsWindowOpened = quarter.end - 3 days; 
+      WithdrawalMetadata withdrawalParameters = withdrawalsHistory[quarterSlot];
+      uint256 withdrawalsKickoff = quarter.end - 3 days;
+      uint256 blockTime = block.timestamp;
 
-      //of course they can only call this function during the withdrawal period
-      //and they must be a supremeHodler, so add that modifier
-      //make sure that only those holders who have made a claim can make a withdrawal (so a claim must exist for this to work)
-      //where are we getting the distribution units from? [We need to extract that value]
+      require(blockTime >= withdrawalsKickoff && watersheds[quarterSlot].withdrawalPhase == true, "ULTIMA: Good things come to those who wait.");
+      uint256h distributionUnits = quarters[quarterSlot].payoffClaims[withdrawalParameters.claimSlot].distributionUnits;
       uint256 payoffFactorScaled = getPayoffFactorScaled(distributionUnits);
       //write the payoffFactorScaled to the withdrawal metadata
       //make the withdrawal calculation 
       //and actually carry out the withdrawal
+
+      //we'll need a whole datastructure for independently determining the permissions for claims and withdrawals
    }
 
    function getPayoffFactorScaled(uint256 dUnits) public returns(uint256 payoffFactorScaled){
