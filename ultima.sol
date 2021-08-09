@@ -90,6 +90,10 @@ contract Ultima {
     _;
   }
 
+  function isFlamekeeper(address ballerina) view external returns(bool isAKeeper){
+    if(flamekeepers[ballerina] == true){ isAKeeper = true;} else {isAKeeper = false;}
+  }
+
   function setInfinityPoolFingerprint(string memory preImage)external onlyFlamekeepers{
     bytes32 _fingerprint = keccak256(abi.encodePacked(preImage));
     infinityPoolFingerprint = _fingerprint;
@@ -106,11 +110,18 @@ contract Ultima {
     _;
   }
 
+  function isSupremeHolder(address ballerina) view external returns(bool ballerinaIsHodler){
+    uint256 ballerinaPoise = supremePoiseOf[ballerina];
+    if(ballerinaPoise > 0){
+      ballerinaIsHodler = true;
+    }else{
+      ballerinaIsHodler = false;
+    }
+  }
 
   //----- INFINITYPOOL INCENTIVE PARAMETERS -----//
-  uint16[5] public supremeTier = [5, 50, 500, 5000, 50000];
-  uint8 private base_percentage = 3;
-  mapping(address => uint256) public supremeHodlers;
+  uint32[5] public supremeTier = [5000, 50000, 500000, 5000000, 50000000];
+  uint8 private base_percentage = 7;
 
   //Pass second parameter called approved, which shows the vote tally for the approval of the change of tiers
   function updateTiers(uint16[5] calldata new_tiers) external onlyFlamekeepers returns (bool){
@@ -258,11 +269,12 @@ contract Ultima {
 
 
   //----- SUPREME UTILITIES -----//
-  function exalt(address receiver, uint256 zenith) external onlyInfinity{
+  function exalt(address receiver, uint256 zenith) external onlyInfinity returns(uint256){
     require(totalExalted + zenith <= maxSupremeSupply, "ULTIMA: This exaltation will exceed the cap if carried out.");
     totalExalted += zenith;
     supremePoiseOf[receiver] += zenith;
     emit HodlerExalted(receiver, zenith);
+    return zenith;
   }
 
 

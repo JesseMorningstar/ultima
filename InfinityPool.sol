@@ -16,11 +16,11 @@ import "./modules/Contextualizer.sol";
 
 interface ultimaContract{
    function exalt(address receiver, uint256 zenith) external returns(uint256);
-   function isFlamekeeper(address ballerina) view external returns(bool isKeeper);
+   function isFlamekeeper(address ballerina) view external returns(bool isAKeeper);
    function isSupremeHolder(address ballerina) view external returns(bool ballerinaIsHodler);
 }
 
-contract InfinityPool {
+contract InfinityPool is Contextualizer {
    struct SupremeStacked { //should probably be supremeDeposit
       uint256 vintage;
       uint256 supreme;
@@ -40,7 +40,6 @@ contract InfinityPool {
       uint256 id;
       uint256 start; 
       uint256 end;
-      bool claimingWindowStatus;
       uint256 valueCreated;
       uint256 totalDistributionUnits;
       //should probably caluclate what the size of the payoff pool will be. it has to be a ratio. 80/20 type situation.
@@ -70,7 +69,7 @@ contract InfinityPool {
       uint256 claimSlot;
       uint256 claimTimestamp; 
       uint256 quarterId; 
-      uint8   payoffFactorScaled;
+      uint256   payoffFactorScaled;
       bool    withdrawn;
       uint256 withdrawalTimestamp;
       uint256 supremeScored;
@@ -83,7 +82,7 @@ contract InfinityPool {
    uint256 public genesisPoint; 
    bool    public genesisPointExists = false;
 
-   uint256 public InfnityPoolExpanse;
+   uint256 public InfinityPoolExpanse;
    uint256 public CommunityTreasury;
    address ultimaAddress;
    uint256[5] internal supremeValue = [1000, 2000, 4000, 10000, 20000];
@@ -114,7 +113,7 @@ contract InfinityPool {
       return 0x2473005d5f1c62bb0bab659db0b42e386021eff8c155dc283d36cb4cda096ccf;
    }
 
-   function setGenesispoint() external onlyFlamekeepers {
+   function setGenesispoint() external onlyFlamekeepers(_msgSender()) {
       require(genesisPointExists == false, "ULTIMA: The Genesis Point already exists.");
       genesisPoint = block.timestamp;
       genesisPointExists = true;
@@ -122,38 +121,38 @@ contract InfinityPool {
    }
 
    //the synchronizing functions will get more sophisticated
-   function syncClaimingPhaseStart(uint256 start) external onlyFlamekeepers{
+   function syncClaimingPhaseStart(uint256 start) external onlyFlamekeepers(_msgSender()){
       uint256 quarterSlot = currentQuarter - 1;
       watersheds[quarterSlot].claimingPhaseStart = start;
       watersheds[quarterSlot].claimingPhase = true;
    }
 
-   function syncClaimingPhaseEnd(uint256 end) external onlyFlamekeepers{
+   function syncClaimingPhaseEnd(uint256 end) external onlyFlamekeepers(_msgSender()){
       uint256 quarterSlot = currentQuarter - 1;
       watersheds[quarterSlot].claimingPhaseEnd = end;
       watersheds[quarterSlot].claimingPhase = false;
    }
 
-   function syncWithdrawalsKickoff(uint256 kickoffPoint) external onlyFlamekeepers{
+   function syncWithdrawalsKickoff(uint256 kickoffPoint) external onlyFlamekeepers(_msgSender()){
       uint256 quarterSlot = currentQuarter - 1;
       watersheds[quarterSlot].withdrawalsKickoff = kickoffPoint;
-      watersheds[quarterSlot].withdrawalsPhase = true;
+      watersheds[quarterSlot].withdrawalPhase = true;
    }
 
-   function rollOutQuarters() external onlyFlamekeepers {
-      uint256 lastQuarterId;
+   function rollOutQuarters() external onlyFlamekeepers(_msgSender()){
+      // uint256 lastQuarterId;
       uint256 lastQuarterEnded;
-      uint128 targetSlot = quarters.length; 
+      uint256 targetSlot = quarters.length; 
       uint128 quartersToAdd = 120;
-      uint128 lastSlot = targetSlot + (quartersToAdd - 1);
-      uint32  quarterId;
+      uint256 lastSlot = targetSlot + (quartersToAdd - 1);
+      uint256  quarterId;
       uint256 start;
       uint256 end;
-      bool claimingWindowStatus = false;
+      uint256 previousQuarterSlot;
       uint256 valueCreated;
       uint256 totalDistributionUnits;
       uint256 payoffPool;
-      PayoffClaim[] _payoffClaims;
+      PayoffClaim[] memory _payoffClaims;
 
       while(targetSlot <= lastSlot){
          if(targetSlot == 0){ 
@@ -170,10 +169,9 @@ contract InfinityPool {
          quarters[targetSlot] = Quarter(
             quarterId, 
             start, 
-            end, 
-            claimingWindowStatus,
+            end,
             valueCreated,
-            totalDistributionUnit,
+            totalDistributionUnits,
             payoffPool,
             _payoffClaims
          );
@@ -182,7 +180,7 @@ contract InfinityPool {
       }
    }
 
-   function addCommunityUtility(address contractAddress, uint256 shareOfPool, bytes32 callsign) external onlyFlamekeepers {
+   function addCommunityUtility(address contractAddress, uint256 shareOfPool, bytes32 callsign) external onlyFlamekeepers(_msgSender()) {
       UtilityCharter memory newUtility;
       newUtility.utilityContract = contractAddress;
       newUtility.callsign = callsign;
@@ -190,7 +188,7 @@ contract InfinityPool {
       communityUtilities.push(newUtility);
    }
 
-   function updateUtilityStatus(bool newStatus, uint8 utilityId) external onlyFlamekeepers returns(bool){
+   function updateUtilityStatus(bool newStatus, uint8 utilityId) external onlyFlamekeepers(_msgSender()) returns(bytes32, bool){
       communityUtilities[utilityId].operative = newStatus;
       return (communityUtilities[utilityId].callsign, newStatus);
    }
@@ -203,50 +201,52 @@ contract InfinityPool {
    function exaltRainmaker(address rainmaker, uint8 quantum) internal returns(uint256 newPoise){
       uint256 zenith = supremeValue[quantum];
       newPoise = ultimaContract(ultimaAddress).exalt(rainmaker, zenith);
-      newConstallation(rainmaker, zenith);
+      newConstellation(rainmaker, zenith);
       InfinityPoolExpanse += zenith;
    }
 
    function claimSupremePayoff() external onlySupremeHodlers(_msgSender()){
       uint256 currentQuarterSlot = currentQuarter - 1;
-      int256 lastClaimSlot = withdrawalsHistory[_msgSender()].length - 1;
+      int256 lastClaimSlot = int256(withdrawalsHistory[_msgSender()].length) - 1;
       bool uniqueClaim = false;
-      uint256[] pendingWithdrawals;
+      uint256[] memory pendingWithdrawals;
       
-      if(lastClaimSlot < 0){uniqueclaim = true;} else{
-         WithdrawalMetadata lastClaimMetadata = withdrawalsHistory[_msgSender()][lastClaimSlot];
+      if(lastClaimSlot < 0){uniqueClaim = true;} else{
+         WithdrawalMetadata memory lastClaimMetadata = withdrawalsHistory[_msgSender()][uint256(lastClaimSlot)];
          if(lastClaimMetadata.quarterId < currentQuarter){uniqueClaim = true;}
       }
       require(uniqueClaim == true, "ULTIMA: You've already claimed your payoff");
 
       uint256 quarterEndMark = quarters[currentQuarterSlot].end;
-      uint256 ClaimingWindowStatus = quarters[currentQuarterSlot].claimingWindowStatus;
       uint256 claimingWindowOpened = quarterEndMark - 10 days;
       uint256 claimingWindowClosed = claimingWindowOpened + 7 days;
+      uint256 supremeScored;
+      uint256 distributionUnits;
       uint256 blockTime = block.timestamp;
       bool    greenLight;
-      if(blockTime >= claimingWindowopened && blockTime <= claimingWindowClosed) greenLight = true;
+      if(blockTime >= claimingWindowOpened && blockTime <= claimingWindowClosed) greenLight = true;
       require(greenLight == true && watersheds[currentQuarterSlot].claimingPhase == true, "ULTIMA: Sorry, you can't claim payoffs at this time.");
 
       
       uint256 stackLevel = depositsOf[_msgSender()].length - 1;
       uint256 claimSlot = quarters[currentQuarterSlot].payoffClaims.length;
-      uint256 (supremeScored, distributionUnits) = getDistributionUnits(_msgSender()); //test these values
+      (supremeScored, distributionUnits) = getDistributionUnits(_msgSender()); //test these values
       uint256 payoffFactorScaled;
       uint256 withdrawalTimestamp;
 
       if(lastClaimSlot >= 0){
-         uint256[] previouslyPending = withdrawalsHistory[_msgSender()][lastClaimSlot].pendingWithdrawals; 
-         pendingWithdrawals = previouslyPending.push(currentQuarter);
+         uint256[] memory previouslyPending = withdrawalsHistory[_msgSender()][uint256(lastClaimSlot)].pendingWithdrawals; 
+         pendingWithdrawals = previouslyPending;
+         uint256 appendSlot = pendingWithdrawals.length;
+         pendingWithdrawals[appendSlot] = currentQuarter; 
       }
       
-      quarters[currentQuarterSlot].payoffClaims.push(PayoffClaim(_msgSender(), distributionUnits, payoffFactorScaled));
+      quarters[currentQuarterSlot].payoffClaims.push(PayoffClaim(payable(_msgSender()), distributionUnits, payoffFactorScaled));
       withdrawalsHistory[_msgSender()].push(WithdrawalMetadata(
          stackLevel, 
          claimSlot, 
          blockTime, 
-         currentQuarter, 
-         supremeScored,
+         currentQuarter,
          payoffFactorScaled, 
          false, 
          withdrawalTimestamp,
@@ -260,48 +260,47 @@ contract InfinityPool {
 
    }
 
-   function withdrawPayoff(uint256 quarterId) external onlySupremeHodlers(_msgSender())  returns(bool){
+   function withdrawPayoff(uint256 quarterId) external onlySupremeHodlers(_msgSender()) returns(uint256 ethPayoff){
       uint256 quarterSlot = quarterId - 1;
-      Quarter quarter = quarters[currentQuarterSlot]; 
-      WithdrawalMetadata withdrawalParameters = withdrawalsHistory[quarterSlot];
+      Quarter memory quarter = quarters[quarterSlot]; 
+      WithdrawalMetadata memory withdrawalParameters = withdrawalsHistory[_msgSender()][quarterSlot];
       uint256 withdrawalsKickoff = quarter.end - 3 days;
       uint256 blockTime = block.timestamp;
 
       require(blockTime >= withdrawalsKickoff && watersheds[quarterSlot].withdrawalPhase == true, "ULTIMA: Good things come to those who wait.");
-      uint256h distributionUnits = quarters[quarterSlot].payoffClaims[withdrawalParameters.claimSlot].distributionUnits;
+      uint256 distributionUnits = quarters[quarterSlot].payoffClaims[withdrawalParameters.claimSlot].distributionUnits;
       uint256 payoffFactorScaled = getPayoffFactorScaled(distributionUnits);
-      //write the payoffFactorScaled to the withdrawal metadata
-      //make the withdrawal calculation 
-      //and actually carry out the withdrawal
-
-      //we'll need a whole datastructure for independently determining the permissions for claims and withdrawals
+      withdrawalParameters.payoffFactorScaled = payoffFactorScaled;
+      uint256 payoffPool = quarter.payoffPool; 
+      ethPayoff = (payoffPool / 10**18) * payoffFactorScaled;
+      releaseSupremePayoff(ethPayoff); 
    }
 
-   function getPayoffFactorScaled(uint256 dUnits) public returns(uint256 payoffFactorScaled){
+   function getPayoffFactorScaled(uint256 dUnits) public view returns(uint256 payoffFactorScaled){
       uint256 scale = 10**18;
       uint256 currentQuarterSlot = currentQuarter - 1;
       uint256 totalDUnits = quarters[currentQuarterSlot].totalDistributionUnits;
       payoffFactorScaled = (dUnits * scale) / totalDUnits;
    }
 
-   function getDistributionUnits(address supremeHodler) internal returns(uint256 supremeScored, distributionUnits){
+   function getDistributionUnits(address supremeHodler) internal view returns(uint256 supremeScored, uint256 distributionUnits){
       SupremeStacked[] memory deposits = depositsOf[supremeHodler];
       uint256 currentQuarterSlot = currentQuarter - 1;
       uint256 nextQuarterSlot = currentQuarter;
-      Quarter thisQuarter = quarters[currentQuarterSlot];
+      Quarter memory thisQuarter = quarters[currentQuarterSlot];
       uint256 numberOfDeposits = deposits.length;
       uint256 withdrawalsToDate = withdrawalsHistory[_msgSender()].length;
       uint256 lastWithdrawalSlot = withdrawalsToDate - 1;
       uint256 accountingPoint = thisQuarter.end;
       uint256 stackLevel;
-      uint226 i;
+      uint256 i;
 
       if(withdrawalsToDate < 1){
          i = 0;
          distributionUnits = 0;
          supremeScored = 0;
       } else {
-         WithdrawalMetadata lastWithdrawal = withdrawalsHistory[lastWithdrawalSlot];
+         WithdrawalMetadata memory lastWithdrawal = withdrawalsHistory[_msgSender()][lastWithdrawalSlot];
          stackLevel = lastWithdrawal.stackLevel; 
          uint256 resetQuarterSlot = lastWithdrawal.quarterId; //check this stuff, it can get dangerous fast
          uint256 resetPoint = quarters[resetQuarterSlot].start;
@@ -312,7 +311,7 @@ contract InfinityPool {
       }
 
       while( i < numberOfDeposits){
-         SupremeStacked deposit = deposits[i];
+         SupremeStacked memory deposit = deposits[i];
          uint256 _lifespan = (quarters[nextQuarterSlot].start - deposit.vintage) / 86400;
          uint256 depositDistributionUnits = _lifespan * deposit.supreme;
          supremeScored += deposit.supreme;
@@ -348,6 +347,9 @@ contract InfinityPool {
       }else {
          revert("ULTIMA: The pool only accepts either 0.5, 1, 2, 5, or 10 ETH");
       }
+   }
+
+   function releaseSupremePayoff(uint ethPayoff) private returns (uint256 supremePayoff){
    }
 
    function getInfinityPoolTide() public view returns(uint){
