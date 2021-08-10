@@ -42,8 +42,9 @@ contract InfinityPool is Contextualizer {
       uint256 end;
       uint256 valueCreated;
       uint256 totalDistributionUnits;
-      //should probably caluclate what the size of the payoff pool will be. it has to be a ratio. 80/20 type situation.
       uint256 payoffPool;
+      uint256 payoffReleased;
+      uint256 payoffLeftover;
       PayoffClaim[] payoffClaims;
    }
 
@@ -57,9 +58,14 @@ contract InfinityPool is Contextualizer {
    }
 
    struct PayoffClaim {
-      address payable supremeHodler;
+      address supremeHodler;
       uint256 distributionUnits;
-      uint256 payoffFactorScaled;
+      bool processed;
+   }
+
+   struct PendingPayoff{
+      uint256 quarterId;
+      uint256 claimSlot;
    }
 
    struct WithdrawalMetadata{
@@ -69,11 +75,10 @@ contract InfinityPool is Contextualizer {
       uint256 claimSlot;
       uint256 claimTimestamp; 
       uint256 quarterId; 
-      uint256   payoffFactorScaled;
+      uint256 payoffFactorScaled;
       bool    withdrawn;
-      uint256 withdrawalTimestamp;
       uint256 supremeScored;
-      uint256[] pendingWithdrawals;
+      uint256 withdrawalTimestamp;
    }
 
    //Information about last withdrawal is essential for computing values for next withdrawal
@@ -90,6 +95,7 @@ contract InfinityPool is Contextualizer {
    Quarter[] public quarters; 
    Synchronizer[] public watersheds;
    mapping(address => SupremeStacked[]) public depositsOf;
+   mapping(address => PendingPayoff[]) public pendingPayoffs;
    mapping(address => WithdrawalMetadata[]) public withdrawalsHistory;
 
 
@@ -152,6 +158,8 @@ contract InfinityPool is Contextualizer {
       uint256 valueCreated;
       uint256 totalDistributionUnits;
       uint256 payoffPool;
+      uint256 payoffReleased;
+      uint256 payoffLeftover;
       PayoffClaim[] memory _payoffClaims;
 
       while(targetSlot <= lastSlot){
@@ -173,6 +181,8 @@ contract InfinityPool is Contextualizer {
             valueCreated,
             totalDistributionUnits,
             payoffPool,
+            payoffReleased,
+            payoffLeftover,
             _payoffClaims
          );
 
@@ -207,13 +217,13 @@ contract InfinityPool is Contextualizer {
 
    function claimSupremePayoff() external onlySupremeHodlers(_msgSender()){
       uint256 currentQuarterSlot = currentQuarter - 1;
-      int256 lastClaimSlot = int256(withdrawalsHistory[_msgSender()].length) - 1;
+      uint256 withdrawalReceiptSlot = withdrawalsHistory[_msgSender()].length;
+      int256 lastReceiptSlot = int256(withdrawalsHistory[_msgSender()].length) - 1;
       bool uniqueClaim = false;
-      uint256[] memory pendingWithdrawals;
       
-      if(lastClaimSlot < 0){uniqueClaim = true;} else{
-         WithdrawalMetadata memory lastClaimMetadata = withdrawalsHistory[_msgSender()][uint256(lastClaimSlot)];
-         if(lastClaimMetadata.quarterId < currentQuarter){uniqueClaim = true;}
+      if(lastReceiptSlot < 0){uniqueClaim = true;} else{
+         WithdrawalMetadata memory lastWithdrawalReceipt = withdrawalsHistory[_msgSender()][uint256(lastReceiptSlot)];
+         if(lastWithdrawalReceipt.quarterId < currentQuarter){uniqueClaim = true;}
       }
       require(uniqueClaim == true, "ULTIMA: You've already claimed your payoff");
 
@@ -230,18 +240,13 @@ contract InfinityPool is Contextualizer {
       
       uint256 stackLevel = depositsOf[_msgSender()].length - 1;
       uint256 claimSlot = quarters[currentQuarterSlot].payoffClaims.length;
-      (supremeScored, distributionUnits) = getDistributionUnits(_msgSender()); //test these values
+      (supremeScored, distributionUnits) = getDistributionUnits(_msgSender()); //t
       uint256 payoffFactorScaled;
       uint256 withdrawalTimestamp;
 
-      if(lastClaimSlot >= 0){
-         uint256[] memory previouslyPending = withdrawalsHistory[_msgSender()][uint256(lastClaimSlot)].pendingWithdrawals; 
-         pendingWithdrawals = previouslyPending;
-         uint256 appendSlot = pendingWithdrawals.length;
-         pendingWithdrawals[appendSlot] = currentQuarter; 
-      }
+      pendingPayoffs[_msgSender()].push(PendingPayoff(currentQuarter, claimSlot));
       
-      quarters[currentQuarterSlot].payoffClaims.push(PayoffClaim(payable(_msgSender()), distributionUnits, payoffFactorScaled));
+      quarters[currentQuarterSlot].payoffClaims.push(PayoffClaim(payable(_msgSender()), distributionUnits, withdrawalReceiptSlot));
       withdrawalsHistory[_msgSender()].push(WithdrawalMetadata(
          stackLevel, 
          claimSlot, 
@@ -249,31 +254,44 @@ contract InfinityPool is Contextualizer {
          currentQuarter,
          payoffFactorScaled, 
          false, 
-         withdrawalTimestamp,
          supremeScored, 
-         pendingWithdrawals
+         withdrawalTimestamp
       ));
       quarters[currentQuarterSlot].totalDistributionUnits += distributionUnits;
    }
 
    function getPendingWithdrawals() external {
-
+      //finish this
    }
 
-   function withdrawPayoff(uint256 quarterId) external onlySupremeHodlers(_msgSender()) returns(uint256 ethPayoff){
+   function withdrawPayoff(uint256 quarterId) external onlySupremeHodlers(_msgSender()) returns(uint256 EthPayoff){
       uint256 quarterSlot = quarterId - 1;
+      uint256 pendingSlot;
+      bool withdrawalPending = false;
+
+      //wrong this is not how we get to the withdrawalParameters => we must get that withdrawal receipt. 
       Quarter memory quarter = quarters[quarterSlot]; 
       WithdrawalMetadata memory withdrawalParameters = withdrawalsHistory[_msgSender()][quarterSlot];
       uint256 withdrawalsKickoff = quarter.end - 3 days;
       uint256 blockTime = block.timestamp;
+      uint256[] memory pendingWithdrawals = withdrawalParameters.pendingWithdrawals;
 
+      for(uint256 i = 0; i < pendingWithdrawals.length; i++){
+         if(pendingWithdrawals[i] == quarterId){
+            withdrawalPending = true;
+            pendingSlot = i; 
+            break;
+         }
+      }
+
+      require(withdrawalPending == true, "ULTIMA: No withdrawal pending for the quarter submitted."); 
       require(blockTime >= withdrawalsKickoff && watersheds[quarterSlot].withdrawalPhase == true, "ULTIMA: Good things come to those who wait.");
       uint256 distributionUnits = quarters[quarterSlot].payoffClaims[withdrawalParameters.claimSlot].distributionUnits;
       uint256 payoffFactorScaled = getPayoffFactorScaled(distributionUnits);
-      withdrawalParameters.payoffFactorScaled = payoffFactorScaled;
-      uint256 payoffPool = quarter.payoffPool; 
-      ethPayoff = (payoffPool / 10**18) * payoffFactorScaled;
-      releaseSupremePayoff(ethPayoff); 
+      withdrawalsHistory[_msgSender()][quarterSlot].payoffFactorScaled = payoffFactorScaled;
+      uint256 payoffPool = quarter.payoffPool;
+      EthPayoff = (payoffPool / 10**18) * payoffFactorScaled;
+      releaseSupremePayoff(EthPayoff, payable(_msgSender()), pendingSlot, quarterSlot); 
    }
 
    function getPayoffFactorScaled(uint256 dUnits) public view returns(uint256 payoffFactorScaled){
@@ -302,7 +320,7 @@ contract InfinityPool is Contextualizer {
       } else {
          WithdrawalMetadata memory lastWithdrawal = withdrawalsHistory[_msgSender()][lastWithdrawalSlot];
          stackLevel = lastWithdrawal.stackLevel; 
-         uint256 resetQuarterSlot = lastWithdrawal.quarterId; //check this stuff, it can get dangerous fast
+         uint256 resetQuarterSlot = lastWithdrawal.quarterId; //t
          uint256 resetPoint = quarters[resetQuarterSlot].start;
          uint256 lifespan = (accountingPoint - resetPoint) / 86400;
          supremeScored = lastWithdrawal.supremeScored;
@@ -349,7 +367,19 @@ contract InfinityPool is Contextualizer {
       }
    }
 
-   function releaseSupremePayoff(uint ethPayoff) private returns (uint256 supremePayoff){
+   function harvest() external payable {
+      //update the CommunityTreasury
+      //should probably caluclate what the size of the payoff pool will be. it has to be a ratio. 80/20 type situation.
+      //The treasury is where we determine what goes to the various utilities 
+      //But as soon as the harvest arrives, we must determine how much of it flows to the payoffPool
+      //so the payoffPool, payoffLeftover are assigned here
+   }
+
+   function releaseSupremePayoff(uint256 EthPayoff, address payable supremeHodler, uint256 pendingSlot, uint256 quarterSlot) private returns (uint256 supremePayoff){
+      quarters[quarterSlot].payoffReleased += EthPayoff;
+      //change the withdrawn variable to true
+      //update the pendingPayoff mapping => you can also update that mapping from the getPendingWithdrawals function
+      //make the transfer to the address 
    }
 
    function getInfinityPoolTide() public view returns(uint){
