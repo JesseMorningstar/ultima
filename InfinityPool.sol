@@ -1,15 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-
-/*
-So this contract's purpose is to aggregate capital and then route it. 
-It's at its core an autonomous capital router.
-Concentrate capital and then route it to crucial community endeavors.
-Key functions include:
-1. Providing a superbly incentivized mechanism for pooling capital. 
-2. Setting up calculations to determine how that capital will be fanned out into the ecosystem.
-3. Implementing an algorithm for the fair distribution of the profits obtained from that productive deployment of capital
-*/
-
 pragma solidity 0.8.3;
 
 import "./modules/Contextualizer.sol"; 
@@ -129,6 +118,9 @@ contract InfinityPool is Contextualizer {
    }
 
    //the synchronizing functions will get more sophisticated
+   //maybe we won't need to sync explicitly. They can first call an oracle that timestapms the transaction
+   //use the timestamp to carry out the transaction. 
+   //so everything can remain contained in the claim function call
    function syncClaimingPhaseStart(uint256 start) external onlyFlamekeepers(_msgSender()){
       uint256 quarterSlot = currentQuarter - 1;
       watersheds[quarterSlot].claimingPhaseStart = start;
@@ -187,6 +179,8 @@ contract InfinityPool is Contextualizer {
             payoffLeftover,
             _payoffClaims
          );
+
+         //you also need to update the watersheds for each quarter. They're independent from each other.
 
          targetSlot++;
       }
@@ -248,7 +242,7 @@ contract InfinityPool is Contextualizer {
       uint256 payoffFactorScaled;
       uint256 withdrawalTimestamp;
 
-      quarters[currentQuarterSlot].payoffClaims.push(PayoffClaim(_msgSender(), distributionUnits, processedClaim));
+      quarters[currentQuarterSlot].payoffClaims.push(PayoffClaim(_msgSender(), distributionUnits, withdrawalReceiptSlot, processedClaim));
       claimSlot = quarters[currentQuarterSlot].payoffClaims.length - 1; 
       pendingPayoffs[_msgSender()].push(PendingPayoff(currentQuarter, claimSlot));
       withdrawalsHistory[_msgSender()].push(WithdrawalMetadata(
@@ -264,11 +258,11 @@ contract InfinityPool is Contextualizer {
       quarters[currentQuarterSlot].totalDistributionUnits += distributionUnits;
    }
 
-   function getNumberOfPendingPayoffs(address hodler) external onlySupremeHodlers(_msgSender()) returns(uint256 numPayoffsPending){
+   function getNumberOfPendingPayoffs(address hodler) view external onlySupremeHodlers(_msgSender()) returns(uint256 numPayoffsPending){
       numPayoffsPending = pendingPayoffs[hodler].length;
    }
 
-   function getPendingPayoffClaimSlot(address hodler, uint256 index) external onlySupremeHodlers(_msgSender()) returns(uint256 quarterId, uint256 pendingPayoffSlot){
+   function getPendingPayoffClaimSlot(address hodler, uint256 index) view external onlySupremeHodlers(_msgSender()) returns(uint256 quarterId, uint256 pendingPayoffSlot){
       quarterId = pendingPayoffs[hodler][index].quarterId;
       pendingPayoffSlot = pendingPayoffs[hodler][index].claimSlot;
    }
@@ -278,34 +272,27 @@ contract InfinityPool is Contextualizer {
       PayoffClaim memory payoffClaim = quarters[quarterSlot].payoffClaims[pendingPayoffSlot];
       require(payoffClaim.processed == false, "ULTIMA: the payoff for this claim has already been withdrawn.");
       uint256 withdrawalReceiptSlot = payoffClaim.withdrawalReceiptSlot;
-      WithdrawalMetadata memory withdrawalReceipt = withdrawalsHistory[withdrawalReceiptSlot];
+      WithdrawalMetadata memory withdrawalReceipt = withdrawalsHistory[_msgSender()][withdrawalReceiptSlot];
       uint256 targetQuarter = withdrawalReceipt.quarterId; 
-      require(quarterId == targetQuarter, "ULTIMA: Withdrawal parameters mismatch. QuarterId must match withdrawal receipt.");
+      require(quarterId == targetQuarter, "ULTIMA: Withdrawal parameters mismatch. quarterId must match withdrawal receipt.");
       
-      //r
-
       Quarter memory quarter = quarters[quarterSlot]; 
-      WithdrawalMetadata memory withdrawalParameters = withdrawalsHistory[_msgSender()][quarterSlot];
       uint256 withdrawalsKickoff = quarter.end - 3 days;
       uint256 blockTime = block.timestamp;
-      uint256[] memory pendingWithdrawals = withdrawalParameters.pendingWithdrawals;
-
-      for(uint256 i = 0; i < pendingWithdrawals.length; i++){
-         if(pendingWithdrawals[i] == quarterId){
-            withdrawalPending = true;
-            pendingSlot = i; 
-            break;
-         }
-      }
-
-      require(withdrawalPending == true, "ULTIMA: No withdrawal pending for the quarter submitted."); 
       require(blockTime >= withdrawalsKickoff && watersheds[quarterSlot].withdrawalPhase == true, "ULTIMA: Good things come to those who wait.");
-      uint256 distributionUnits = quarters[quarterSlot].payoffClaims[withdrawalParameters.claimSlot].distributionUnits;
+      
+      uint256 distributionUnits = payoffClaim.distributionUnits;
       uint256 payoffFactorScaled = getPayoffFactorScaled(distributionUnits);
-      withdrawalsHistory[_msgSender()][quarterSlot].payoffFactorScaled = payoffFactorScaled;
+      withdrawalsHistory[_msgSender()][withdrawalReceiptSlot].payoffFactorScaled = payoffFactorScaled;
       uint256 payoffPool = quarter.payoffPool;
       EthPayoff = (payoffPool / 10**18) * payoffFactorScaled;
-      releaseSupremePayoff(EthPayoff, payable(_msgSender()), pendingSlot, quarterSlot); 
+
+      quarters[quarterSlot].payoffReleased += EthPayoff;
+      quarters[quarterSlot].payoffLeftover -= EthPayoff;
+      withdrawalsHistory[_msgSender()][withdrawalReceiptSlot].withdrawn = true;
+      
+      //update the pendingPayoffs mapping
+      //make the transfer to the address 
    }
 
    function getPayoffFactorScaled(uint256 dUnits) public view returns(uint256 payoffFactorScaled){
@@ -382,10 +369,6 @@ contract InfinityPool is Contextualizer {
    }
 
    function harvest() external payable {
-   }
-
-   function releaseSupremePayoff(uint256 EthPayoff, address payable supremeHodler, uint256 pendingSlot, uint256 quarterSlot) private returns (uint256 supremePayoff){
-      quarters[quarterSlot].payoffReleased += EthPayoff;
    }
 
    function getInfinityPoolTide() public view returns(uint){
