@@ -89,6 +89,7 @@ contract InfinityPool is Contextualizer {
    mapping(address => PendingPayoff[]) public pendingPayoffs;
    mapping(address => WithdrawalMetadata[]) public withdrawalsHistory;
 
+   event PayoffWithdrawn(address indexed sepremeHodler, uint256 indexed quarterId, uint256 indexed EthPayoff);
 
    modifier onlyFlamekeepers(address theCaller){
       bool isAKeeper = ultimaContract(ultimaAddress).isFlamekeeper(theCaller);
@@ -267,12 +268,13 @@ contract InfinityPool is Contextualizer {
       pendingPayoffSlot = pendingPayoffs[hodler][index].claimSlot;
    }
 
-   function withdrawPayoff(uint256 quarterId, uint256 pendingPayoffSlot) external onlySupremeHodlers(_msgSender()) returns(uint256 EthPayoff){
+   function withdrawPayoff(uint256 pendingIndex, uint256 quarterId, uint256 pendingPayoffSlot) external onlySupremeHodlers(_msgSender()) returns(uint256 EthPayoff){
       uint256 quarterSlot = quarterId - 1;
       PayoffClaim memory payoffClaim = quarters[quarterSlot].payoffClaims[pendingPayoffSlot];
       require(payoffClaim.processed == false, "ULTIMA: the payoff for this claim has already been withdrawn.");
       uint256 withdrawalReceiptSlot = payoffClaim.withdrawalReceiptSlot;
-      WithdrawalMetadata memory withdrawalReceipt = withdrawalsHistory[_msgSender()][withdrawalReceiptSlot];
+      address payable supremeHodler = payable(_msgSender());
+      WithdrawalMetadata memory withdrawalReceipt = withdrawalsHistory[supremeHodler][withdrawalReceiptSlot];
       uint256 targetQuarter = withdrawalReceipt.quarterId; 
       require(quarterId == targetQuarter, "ULTIMA: Withdrawal parameters mismatch. quarterId must match withdrawal receipt.");
       
@@ -283,16 +285,25 @@ contract InfinityPool is Contextualizer {
       
       uint256 distributionUnits = payoffClaim.distributionUnits;
       uint256 payoffFactorScaled = getPayoffFactorScaled(distributionUnits);
-      withdrawalsHistory[_msgSender()][withdrawalReceiptSlot].payoffFactorScaled = payoffFactorScaled;
+      withdrawalsHistory[supremeHodler][withdrawalReceiptSlot].payoffFactorScaled = payoffFactorScaled;
       uint256 payoffPool = quarter.payoffPool;
       EthPayoff = (payoffPool / 10**18) * payoffFactorScaled;
 
+      uint256 lastElementSlot = pendingPayoffs[supremeHodler].length - 1;
+      if(lastElementSlot == pendingIndex) {
+         pendingPayoffs[supremeHodler].pop();
+      }else{
+         PendingPayoff memory swapElement = pendingPayoffs[supremeHodler][lastElementSlot];
+         pendingPayoffs[supremeHodler][pendingPayoffSlot] = swapElement;
+         pendingPayoffs[supremeHodler].pop();
+      }
+
       quarters[quarterSlot].payoffReleased += EthPayoff;
       quarters[quarterSlot].payoffLeftover -= EthPayoff;
-      withdrawalsHistory[_msgSender()][withdrawalReceiptSlot].withdrawn = true;
-      
-      //update the pendingPayoffs mapping
-      //make the transfer to the address 
+      quarters[quarterSlot].payoffClaims[pendingPayoffSlot].processed = true;
+      withdrawalsHistory[supremeHodler][withdrawalReceiptSlot].withdrawn = true;
+      supremeHodler.transfer(EthPayoff);
+      emit PayoffWithdrawn(supremeHodler, quarterId, EthPayoff);
    }
 
    function getPayoffFactorScaled(uint256 dUnits) public view returns(uint256 payoffFactorScaled){
